@@ -1,0 +1,264 @@
+import { useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
+import TopHeader from '../../components/shared/TopHeader';
+import customerApi from '../../api/customer';
+
+const ADD_STATUS_META = {
+  pending_proof: { label: 'Pending', className: 'bg-amber-50 dark:bg-amber-900/20 text-amber-700' }, // Legacy status
+  pending: { label: 'Pending Approval', className: 'bg-blue-50 dark:bg-blue-900/20 text-blue-600' },
+  verified: { label: 'Approved', className: 'bg-green-50 dark:bg-emerald-900/20 text-green-600 dark:text-emerald-400' },
+  rejected: { label: 'Rejected', className: 'bg-red-50 dark:bg-red-900/20 text-red-600' },
+};
+
+const WD_STATUS_META = {
+  pending: { label: 'Pending', className: 'bg-amber-50 dark:bg-amber-900/20 text-amber-700' },
+  approved: { label: 'Approved', className: 'bg-green-50 dark:bg-emerald-900/20 text-green-600 dark:text-emerald-400' },
+  completed: { label: 'Completed', className: 'bg-green-50 dark:bg-emerald-900/20 text-green-600 dark:text-emerald-400' },
+  rejected: { label: 'Rejected', className: 'bg-red-50 dark:bg-red-900/20 text-red-600' },
+  failed: { label: 'Failed', className: 'bg-red-50 dark:bg-red-900/20 text-red-600' },
+  processing: { label: 'Processing', className: 'bg-blue-50 dark:bg-blue-900/20 text-blue-600' },
+};
+
+const formatCurrency = (value) => {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return '₹0.00';
+  return `₹${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};
+
+const formatDateTime = (value) => {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+const Payments = () => {
+  const location = useLocation();
+  const highlightedRequestId = location.state?.requestId || '';
+
+  const [activeTab, setActiveTab] = useState('add');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const [addFundRequests, setAddFundRequests] = useState([]);
+  const [withdrawalRequests, setWithdrawalRequests] = useState([]);
+  const [paymentInfo, setPaymentInfo] = useState(null);
+  const [showQr, setShowQr] = useState(false);
+
+  const fetchRecords = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const [paymentsRes, withdrawalsRes, paymentInfoRes] = await Promise.all([
+        customerApi.getAddFundRequests({ limit: 50 }),
+        customerApi.getWithdrawalRequests({ limit: 50 }),
+        customerApi.getPaymentInfo().catch(() => null),
+      ]);
+
+      setAddFundRequests(paymentsRes.payments || []);
+      setWithdrawalRequests(withdrawalsRes.withdrawals || []);
+      setPaymentInfo(paymentInfoRes?.paymentInfo || null);
+    } catch (err) {
+      setError(err?.response?.data?.message || 'Failed to load payment records.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRecords();
+  }, []);
+
+  const pendingRequestCount = useMemo(
+    () => addFundRequests.filter((r) => r.status === 'pending_proof' || r.status === 'pending').length,
+    [addFundRequests]
+  );
+
+  const upiQrUrl = useMemo(() => {
+    if (paymentInfo?.qrPhotoUrl) return paymentInfo.qrPhotoUrl;
+    if (!paymentInfo?.upiId) return '';
+    const payload = `upi://pay?pa=${paymentInfo.upiId}`;
+    return `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(payload)}`;
+  }, [paymentInfo]);
+
+  return (
+    <div className="min-h-screen bg-[#f2f4f6] dark:bg-[#050806] dark:text-[#e8f3ee]">
+      <TopHeader title="Payments" showBack={true} />
+
+      <div className="px-4 py-4 space-y-4">
+        <div className="bg-white dark:bg-[#111b17] rounded-xl border border-gray-200 dark:border-[#22352d] shadow-sm p-3.5">
+          <p className="text-[#617589] dark:text-[#9cb7aa] text-xs uppercase tracking-wide">Pending Requests</p>
+          <p className="text-[#111418] dark:text-[#e8f3ee] text-xl font-bold mt-0.5">{pendingRequestCount}</p>
+          <div className="mt-2.5 space-y-1 text-[11px] text-[#617589] dark:text-[#9cb7aa]">
+            <p>Broker: {paymentInfo?.brokerName || '-'}</p>
+            <p>Contact: {paymentInfo?.supportContact || '-'}</p>
+            <p>UPI ID: {paymentInfo?.upiId || '-'}</p>
+          </div>
+          {(paymentInfo?.qrPhotoUrl || paymentInfo?.upiId) && (
+            <button
+              onClick={() => setShowQr(true)}
+              className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-[#137fec]/10 px-2.5 py-1.5 text-[11px] font-semibold text-[#137fec]"
+            >
+              <span className="material-symbols-outlined text-[16px]">qr_code_2</span>
+              Show QR
+            </button>
+          )}
+        </div>
+
+        <div className="flex bg-white dark:bg-[#111b17] rounded-xl border border-gray-200 dark:border-[#22352d] p-1 shadow-sm">
+          <button
+            onClick={() => setActiveTab('add')}
+            className={`flex-1 py-2 rounded-lg text-sm font-semibold ${
+              activeTab === 'add' ? 'bg-[#137fec] text-white' : 'text-[#617589] dark:text-[#9cb7aa]'
+            }`}
+          >
+            Funds
+          </button>
+          <button
+            onClick={() => setActiveTab('withdraw')}
+            className={`flex-1 py-2 rounded-lg text-sm font-semibold ${
+              activeTab === 'withdraw' ? 'bg-[#137fec] text-white' : 'text-[#617589] dark:text-[#9cb7aa]'
+            }`}
+          >
+            Withdrawals
+          </button>
+        </div>
+
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-red-700 text-sm">
+            {error}
+          </div>
+        )}
+
+        {loading ? (
+          <div className="space-y-3 animate-pulse">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="bg-white dark:bg-[#111b17] rounded-xl h-28 border border-gray-200 dark:border-[#22352d]" />
+            ))}
+          </div>
+        ) : activeTab === 'add' ? (
+          addFundRequests.length === 0 ? (
+            <div className="bg-white dark:bg-[#111b17] rounded-xl border border-gray-200 dark:border-[#22352d] p-8 text-center">
+              <span className="material-symbols-outlined text-gray-300 dark:text-[#22352d] text-4xl">receipt_long</span>
+              <p className="text-sm text-[#617589] dark:text-[#9cb7aa] mt-2">No fund requests found.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {addFundRequests.map((request) => {
+                const statusMeta = ADD_STATUS_META[request.status] || ADD_STATUS_META.pending;
+                const highlight = request.id === highlightedRequestId;
+
+                return (
+                  <div
+                    key={request.id}
+                    className={`bg-white dark:bg-[#111b17] rounded-xl border shadow-sm p-3.5 ${
+                      highlight ? 'border-[#137fec]' : 'border-gray-200 dark:border-[#22352d]'
+                    }`}
+                  >
+                    <div className="flex justify-between items-start gap-3">
+                      <div>
+                        <p className="text-[#111418] dark:text-[#e8f3ee] text-base font-bold">{formatCurrency(request.amount)}</p>
+                        <p className="text-[11px] text-[#617589] dark:text-[#9cb7aa] mt-0.5">
+                          {formatDateTime(request.createdAt)}
+                        </p>
+                        <p className="text-[10px] text-[#617589] dark:text-[#9cb7aa] mt-1 font-mono">{request.id}</p>
+                        {request.utrNumber && (
+                          <p className="text-[10px] text-[#617589] dark:text-[#9cb7aa] mt-1">UTR: {request.utrNumber}</p>
+                        )}
+                      </div>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${statusMeta.className}`}>
+                        {statusMeta.label}
+                      </span>
+                    </div>
+
+                    {request.rejectionReason && (
+                      <p className="mt-2 text-[11px] text-red-600 bg-red-50 border border-red-100 rounded-lg p-2">
+                        Rejected: {request.rejectionReason}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )
+        ) : withdrawalRequests.length === 0 ? (
+          <div className="bg-white dark:bg-[#111b17] rounded-xl border border-gray-200 dark:border-[#22352d] p-8 text-center">
+            <span className="material-symbols-outlined text-gray-300 dark:text-[#22352d] text-4xl">payments</span>
+            <p className="text-sm text-[#617589] dark:text-[#9cb7aa] mt-2">No withdrawal requests found.</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {withdrawalRequests.map((request) => {
+              const statusMeta = WD_STATUS_META[request.status] || WD_STATUS_META.pending;
+              return (
+                <div key={request.id} className="bg-white dark:bg-[#111b17] rounded-xl border border-gray-200 dark:border-[#22352d] shadow-sm p-3.5">
+                  <div className="flex justify-between items-start gap-3">
+                    <div>
+                      <p className="text-[#111418] dark:text-[#e8f3ee] text-base font-bold">{formatCurrency(request.amount)}</p>
+                      <p className="text-[11px] text-[#617589] dark:text-[#9cb7aa] mt-0.5">{formatDateTime(request.createdAt)}</p>
+                      {request.requestRef && (
+                        <p className="text-[10px] text-[#617589] dark:text-[#9cb7aa] mt-1 font-mono">{request.requestRef}</p>
+                      )}
+                      {request.bankDetails?.bank_name && (
+                        <p className="text-[11px] text-[#617589] dark:text-[#9cb7aa] mt-1">
+                          {request.bankDetails.bank_name} • {request.bankDetails.account_number_masked || ''}
+                        </p>
+                      )}
+                    </div>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${statusMeta.className}`}>
+                      {statusMeta.label}
+                    </span>
+                  </div>
+
+                  {request.rejectionReason && (
+                    <p className="mt-2 text-[11px] text-red-600 bg-red-50 border border-red-100 rounded-lg p-2">
+                      Rejected: {request.rejectionReason}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {showQr && (
+        <div
+          className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+          onClick={() => setShowQr(false)}
+        >
+          <div
+            className="bg-white dark:bg-[#111b17] rounded-2xl p-4 w-full max-w-sm shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-[#111418] dark:text-[#e8f3ee] text-base font-bold">Broker UPI QR</h3>
+              <button
+                onClick={() => setShowQr(false)}
+                className="text-[#617589] dark:text-[#9cb7aa] hover:text-[#111418] dark:hover:text-[#e8f3ee]"
+              >
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
+            </div>
+            {upiQrUrl ? (
+              <div className="rounded-xl border border-gray-200 dark:border-[#22352d] bg-[#f6f7f8] dark:bg-[#16231d] p-3">
+                <img src={upiQrUrl} alt="Broker UPI QR" className="w-full h-auto rounded-lg" />
+                <p className="text-[11px] text-[#617589] dark:text-[#9cb7aa] mt-2 text-center">{paymentInfo?.upiId}</p>
+              </div>
+            ) : (
+              <p className="text-sm text-[#617589] dark:text-[#9cb7aa]">UPI ID not available.</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default Payments;
