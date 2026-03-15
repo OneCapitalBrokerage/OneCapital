@@ -178,7 +178,7 @@ const ExitOrderSheet = ({
 
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <p className="text-[#2b3a4a] dark:text-[#e8f3ee] text-sm font-bold">Quantity to Exit</p>
+              <p className="text-[#2b3a4a] dark:text-[#e8f3ee] text-sm font-bold">{(order?.units_per_contract || 0) > 0 ? 'Units to Exit' : 'Quantity to Exit'}</p>
               <p className="text-[#909dab] dark:text-[#9cb7aa] text-xs font-semibold">Max Available: {maxQuantity}</p>
             </div>
             <div className="rounded-xl border border-gray-200 dark:border-[#22352d] bg-white dark:bg-[#16231d] p-1.5 flex items-center gap-1.5">

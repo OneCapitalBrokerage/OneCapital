@@ -13,8 +13,10 @@ const ModifyOrderSheet = ({
   apiGetBalance,
   onConvertToHold,
   onExtendValidity,
+  onAdjustHolding,
   brokerMode,
   marketClosedForCustomer = false,
+  marketClosedReason = '',
   livePrices = {},
 }) => {
   const toPositiveNumber = (value) => {
@@ -30,14 +32,27 @@ const ModifyOrderSheet = ({
   const [feedback, setFeedback] = useState(null);
   const [funds, setFunds] = useState(null);
 
+  // Broker-only holdings correction state
+  const [correctionQty, setCorrectionQty] = useState('');
+  const [correctionLots, setCorrectionLots] = useState('');
+  const [correctionSubmitting, setCorrectionSubmitting] = useState(false);
+  const [correctionFeedback, setCorrectionFeedback] = useState(null);
+
   const navigate = useNavigate();
 
   const isBuy = order?.side === 'BUY';
   const currentQty = toPositiveNumber(order?.quantity);
   const rawLots = toPositiveNumber(order?.lots);
+  const upc = toPositiveNumber(order?.units_per_contract);
   const rawLotSize = toPositiveNumber(order?.lot_size || order?.lotSize);
-  const inferredLotSize = rawLotSize || (rawLots > 0 ? currentQty / rawLots : 0);
+  const inferredLotSize = upc > 0 ? upc : (rawLotSize || (rawLots > 0 ? currentQty / rawLots : 0));
   const lotSize = Math.max(1, Math.round(inferredLotSize || 1));
+  const isMcx = useMemo(() => {
+    const ex = String(order?.exchange || '').toUpperCase();
+    const seg = String(order?.segment || '').toUpperCase();
+    return ex.includes('MCX') || seg.includes('MCX') || upc > 0;
+  }, [order?.exchange, order?.segment, upc]);
+  const isMcxOrder = isMcx;
   const currentLots = rawLots > 0 ? rawLots : Math.round(currentQty / lotSize);
   const currentPrice = order?.price || 0;
   const ltp = (livePrices[order?.instrument_token] ?? order?.ltp ?? order?.last_price ?? currentPrice) || 0;
@@ -54,6 +69,11 @@ const ModifyOrderSheet = ({
     return seg.includes('OPT') || sym.endsWith('CE') || sym.endsWith('PE') || sym.endsWith('CALL') || sym.endsWith('PUT');
   }, [order?.segment, order?.symbol]);
 
+  // Gate: show broker-only holdings correction section
+  const showHoldingsCorrection = brokerMode && isLongTerm
+    && order?.id && !order?.isAggregated && !order?.is_aggregated
+    && ['OPEN', 'EXECUTED', 'HOLD', 'PENDING'].includes((order?.status || '').toUpperCase());
+
   useEffect(() => {
     if (!isOpen) return;
     setAddLots('');
@@ -61,6 +81,9 @@ const ModifyOrderSheet = ({
     setTargetPrice(order?.target > 0 ? String(order.target) : '');
     setEditPrice(brokerMode && order?.price ? String(order.price) : '');
     setFeedback(null);
+    setCorrectionQty('');
+    setCorrectionLots('');
+    setCorrectionFeedback(null);
   }, [isOpen, order, brokerMode]);
 
   useEffect(() => {
@@ -87,21 +110,71 @@ const ModifyOrderSheet = ({
 
   const availableBalance = useMemo(() => {
     if (!funds) return 0;
-    // Option orders use option premium balance only
+    // MCX options use commodity option premium
+    if (isOption && isMcx) {
+      return (funds?.trading?.commodityOptionPremium?.remaining ?? 0);
+    }
+    // Options use ONLY the option premium balance
     if (isOption) {
       return (funds?.trading?.optionPremium?.remaining ?? funds?.balance?.optionPremium?.remaining ?? 0);
     }
     if (product === 'MIS') {
       return (funds?.balance?.intraday?.free ?? funds?.balance?.intraday?.available_limit ?? 0);
     }
+    // MCX CNC/NRML uses commodity delivery bucket
+    if (isMcx) {
+      return (funds?.trading?.commodityDelivery?.remaining ?? 0);
+    }
     return (funds?.balance?.overnight?.available ?? funds?.balance?.overnight?.available_limit ?? 0);
-  }, [funds, product, isOption]);
+  }, [funds, product, isOption, isMcx]);
 
   if (!isOpen || !order) return null;
 
+  const handleHoldingsCorrection = async () => {
+    const parsedCorrQty = parseInt(correctionQty, 10);
+    const parsedCorrLots = parseInt(correctionLots, 10);
+    if (!Number.isFinite(parsedCorrQty) || parsedCorrQty <= 0) {
+      setCorrectionFeedback({ type: 'error', message: 'Quantity must be a positive integer.' });
+      return;
+    }
+    if (!Number.isFinite(parsedCorrLots) || parsedCorrLots <= 0) {
+      setCorrectionFeedback({ type: 'error', message: 'Lots must be a positive integer.' });
+      return;
+    }
+    if (lotSize > 1 && parsedCorrQty % lotSize !== 0) {
+      setCorrectionFeedback({ type: 'error', message: `Quantity must be divisible by lot size (${lotSize}).` });
+      return;
+    }
+    if (Math.round(parsedCorrQty / lotSize) !== parsedCorrLots) {
+      setCorrectionFeedback({ type: 'error', message: `Quantity (${parsedCorrQty}) and lots (${parsedCorrLots}) are inconsistent with lot size (${lotSize}).` });
+      return;
+    }
+    if (!onAdjustHolding) {
+      setCorrectionFeedback({ type: 'error', message: 'Adjustment handler not available.' });
+      return;
+    }
+    setCorrectionSubmitting(true);
+    setCorrectionFeedback(null);
+    try {
+      await onAdjustHolding(order, { quantity: parsedCorrQty, lots: parsedCorrLots });
+      setCorrectionFeedback({ type: 'success', message: 'Holdings corrected.' });
+      if (typeof onModified === 'function') onModified();
+      setTimeout(() => onClose?.(), 800);
+    } catch (err) {
+      setCorrectionFeedback({
+        type: 'error',
+        message: err?.response?.data?.message || err?.message || 'Correction failed.',
+      });
+    } finally {
+      setCorrectionSubmitting(false);
+    }
+  };
+
+  const resolvedClosedText = marketClosedReason || MARKET_CLOSED_TEXT;
+
   const validate = () => {
     if (marketClosedHoldingBlocked) {
-      return MARKET_CLOSED_TEXT;
+      return resolvedClosedText;
     }
 
     const sl = Number(slPrice);
@@ -128,7 +201,7 @@ const ModifyOrderSheet = ({
 
   const handleSubmit = async () => {
     if (marketClosedHoldingBlocked) {
-      setFeedback({ type: 'error', message: MARKET_CLOSED_TEXT });
+      setFeedback({ type: 'error', message: resolvedClosedText });
       return;
     }
 
@@ -259,7 +332,7 @@ const ModifyOrderSheet = ({
           {/* Position Summary */}
           <div className="grid grid-cols-2 gap-2">
             <div className="bg-[#f6f7f8] dark:bg-[#16231d] rounded-lg p-2.5 text-center">
-              <p className="text-[10px] text-[#617589] dark:text-[#9cb7aa] mb-0.5">Qty</p>
+              <p className="text-[10px] text-[#617589] dark:text-[#9cb7aa] mb-0.5">{isMcxOrder ? 'Units' : 'Qty'}</p>
               <p className="text-sm font-bold text-[#111418] dark:text-[#e8f3ee]">{currentQty}</p>
             </div>
             <div className="bg-[#f6f7f8] dark:bg-[#16231d] rounded-lg p-2.5 text-center">
@@ -267,7 +340,7 @@ const ModifyOrderSheet = ({
               <p className="text-sm font-bold text-[#111418] dark:text-[#e8f3ee]">{currentLots}</p>
             </div>
             <div className="bg-[#f6f7f8] dark:bg-[#16231d] rounded-lg p-2.5 text-center">
-              <p className="text-[10px] text-[#617589] dark:text-[#9cb7aa] mb-0.5">Lot Size</p>
+              <p className="text-[10px] text-[#617589] dark:text-[#9cb7aa] mb-0.5">{isMcxOrder ? 'Units/Lot' : 'Lot Size'}</p>
               <p className="text-sm font-bold text-[#111418] dark:text-[#e8f3ee]">{lotSize}</p>
             </div>
             <div className="bg-[#f6f7f8] dark:bg-[#16231d] rounded-lg p-2.5 text-center">
@@ -378,7 +451,7 @@ const ModifyOrderSheet = ({
           {marketClosedHoldingBlocked && (
             <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-amber-50 text-amber-700">
               <span className="material-symbols-outlined text-[16px] mt-0.5 shrink-0">schedule</span>
-              <p className="text-[11px] leading-snug">{MARKET_CLOSED_TEXT}</p>
+              <p className="text-[11px] leading-snug">{resolvedClosedText}</p>
             </div>
           )}
 
@@ -402,6 +475,83 @@ const ModifyOrderSheet = ({
             </div>
           )}
 
+          {/* Broker-only Holdings Correction */}
+          {showHoldingsCorrection && (
+            <div className="border-t border-gray-100 pt-4">
+              <label className="text-[11px] font-semibold text-[#617589] dark:text-[#9cb7aa] uppercase tracking-wider mb-1.5 flex items-center gap-2">
+                Holdings Correction
+                <span className="text-[9px] text-amber-600 normal-case font-normal">Broker only · No reapproval</span>
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="text-[10px] text-[#617589] dark:text-[#9cb7aa] block mb-1">Quantity</label>
+                  <input
+                    className="w-full bg-[#f6f7f8] dark:bg-[#16231d] border-0 rounded-lg px-2 py-2 text-center text-sm font-bold text-[#111418] dark:text-[#e8f3ee] focus:ring-2 focus:ring-amber-400 outline-none"
+                    type="number"
+                    min="1"
+                    step={lotSize}
+                    placeholder={String(currentQty)}
+                    value={correctionQty}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setCorrectionQty(v);
+                      const n = parseInt(v, 10);
+                      if (Number.isFinite(n) && n > 0 && lotSize > 0) {
+                        setCorrectionLots(String(Math.round(n / lotSize)));
+                      } else if (!v) {
+                        setCorrectionLots('');
+                      }
+                    }}
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-[#617589] dark:text-[#9cb7aa] block mb-1">Lots</label>
+                  <input
+                    className="w-full bg-[#f6f7f8] dark:bg-[#16231d] border-0 rounded-lg px-2 py-2 text-center text-sm font-bold text-[#111418] dark:text-[#e8f3ee] focus:ring-2 focus:ring-amber-400 outline-none"
+                    type="number"
+                    min="1"
+                    placeholder={String(currentLots)}
+                    value={correctionLots}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setCorrectionLots(v);
+                      const n = parseInt(v, 10);
+                      if (Number.isFinite(n) && n > 0) {
+                        setCorrectionQty(String(n * lotSize));
+                      } else if (!v) {
+                        setCorrectionQty('');
+                      }
+                    }}
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-[#617589] dark:text-[#9cb7aa] block mb-1">Lot Size</label>
+                  <div className="w-full bg-gray-100 dark:bg-[#1a2920] rounded-lg px-2 py-2 text-center text-sm font-bold text-[#617589] dark:text-[#9cb7aa]">
+                    {lotSize}
+                  </div>
+                </div>
+              </div>
+              {correctionFeedback && (
+                <div className={`mt-2 text-xs font-medium px-3 py-2 rounded-lg ${
+                  correctionFeedback.type === 'error' ? 'text-red-600 bg-red-50' : 'text-[#078838] bg-green-50'
+                }`}>
+                  {correctionFeedback.message}
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={handleHoldingsCorrection}
+                disabled={correctionSubmitting || !correctionQty || !correctionLots}
+                className="mt-2 w-full py-2.5 rounded-xl bg-amber-500 text-white font-semibold text-sm hover:bg-amber-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-1"
+              >
+                {correctionSubmitting && (
+                  <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span>
+                )}
+                {correctionSubmitting ? 'Applying...' : 'Apply Correction'}
+              </button>
+            </div>
+          )}
+
           {/* Feedback */}
           {feedback && (
             <div className={`text-xs font-medium px-3 py-2 rounded-lg ${
@@ -409,6 +559,11 @@ const ModifyOrderSheet = ({
             }`}>
               {feedback.message}
             </div>
+          )}
+
+          {/* Extend validity eligibility hint */}
+          {order?.validity_mode === 'EQUITY_7D' && !order?.can_extend_validity && order?.extend_validity_reason && (
+            <p className="text-[11px] text-amber-600 text-center">{order.extend_validity_reason}</p>
           )}
 
           {/* Actions */}
@@ -434,8 +589,9 @@ const ModifyOrderSheet = ({
               <button
                 type="button"
                 onClick={() => onExtendValidity(order)}
-                disabled={submitting}
-                className="flex-1 py-3 rounded-xl bg-amber-500 text-white font-semibold text-sm hover:bg-amber-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-1"
+                disabled={submitting || !order?.can_extend_validity}
+                title={!order?.can_extend_validity ? (order?.extend_validity_reason || 'Not eligible yet') : undefined}
+                className="flex-1 py-3 rounded-xl bg-amber-500 text-white font-semibold text-sm hover:bg-amber-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1"
               >
                 <span className="material-symbols-outlined text-[16px]">update</span>
                 Extend +7d

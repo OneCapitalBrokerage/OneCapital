@@ -194,9 +194,41 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   /**
-   * Logout user
+   * Logout user — if a parent impersonation session exists, exit impersonation instead
    */
   const logout = useCallback(async () => {
+    // If impersonating, treat logout as "exit impersonation" to avoid losing parent session
+    try {
+      const adminToken = sessionStorage.getItem('adminToken');
+      const adminUser = sessionStorage.getItem('adminUser');
+      const returnTo = sessionStorage.getItem('impersonationReturnTo');
+      const brokerToken = sessionStorage.getItem('brokerToken');
+      const brokerUser = sessionStorage.getItem('brokerUser');
+
+      if (adminToken) {
+        localStorage.setItem('accessToken', adminToken);
+        localStorage.setItem('user', adminUser || '');
+        sessionStorage.removeItem('adminToken');
+        sessionStorage.removeItem('adminUser');
+        sessionStorage.removeItem('impersonationReturnTo');
+        window.location.href = returnTo || '/admin/customers';
+        return;
+      }
+
+      if (brokerToken) {
+        localStorage.setItem('accessToken', brokerToken);
+        sessionStorage.removeItem('brokerToken');
+        if (brokerUser) {
+          localStorage.setItem('user', brokerUser);
+          sessionStorage.removeItem('brokerUser');
+        }
+        window.location.href = '/broker/clients';
+        return;
+      }
+    } catch {
+      // sessionStorage unavailable — fall through to normal logout
+    }
+
     setLoading(true);
     try {
       await authApi.logout();

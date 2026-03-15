@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import adminApi from '../../api/admin';
 import CustomerDetailSheet from './components/CustomerDetailSheet';
 
 const Customers = () => {
   const navigate = useNavigate();
   const { customerId } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const brokerId = searchParams.get('brokerId') || '';
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -13,6 +16,15 @@ const Customers = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [customers, setCustomers] = useState([]);
+  const [brokerFilterName, setBrokerFilterName] = useState('');
+
+  // Fetch broker name for display when brokerId filter is active
+  useEffect(() => {
+    if (!brokerId) { setBrokerFilterName(''); return; }
+    adminApi.getBrokerById(brokerId)
+      .then(res => setBrokerFilterName(res.broker?.name || brokerId))
+      .catch(() => setBrokerFilterName(brokerId));
+  }, [brokerId]);
 
   const fetchCustomers = useCallback(async () => {
     setLoading(true);
@@ -22,7 +34,8 @@ const Customers = () => {
         page: currentPage,
         limit: 20,
         search: searchQuery,
-        status: filterStatus !== 'All' ? filterStatus.toLowerCase() : undefined
+        status: filterStatus !== 'All' ? filterStatus.toLowerCase() : undefined,
+        brokerId: brokerId || undefined,
       });
 
       const customersData = response.customers || response.data || [];
@@ -48,18 +61,22 @@ const Customers = () => {
     } finally {
       setLoading(false);
     }
-  }, [currentPage, searchQuery, filterStatus]);
+  }, [currentPage, searchQuery, filterStatus, brokerId]);
 
   useEffect(() => { fetchCustomers(); }, [fetchCustomers]);
 
-  const filteredCustomers = customers.filter(customer => {
-    const matchesSearch =
-      customer.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      customer.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      customer.phone.includes(searchQuery);
-    const matchesFilter = filterStatus === 'All' || customer.status === filterStatus;
-    return matchesSearch && matchesFilter;
-  });
+  // Reset to page 1 when filters change
+  useEffect(() => { setCurrentPage(1); }, [searchQuery, filterStatus, brokerId]);
+
+  const clearBrokerFilter = () => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.delete('brokerId');
+      return next;
+    });
+  };
+
+  const filteredCustomers = customers;
 
   const getKycStatusStyle = (status) => {
     switch (status) {
@@ -85,8 +102,15 @@ const Customers = () => {
     blocked: customers.filter(c => c.status === 'Blocked').length
   };
 
-  const openDetail = (id) => navigate(`/admin/customers/${id}`);
-  const closeDetail = () => { fetchCustomers(); navigate('/admin/customers'); };
+  const openDetail = (id) => {
+    const qs = searchParams.toString();
+    navigate(`/admin/customers/${id}${qs ? `?${qs}` : ''}`);
+  };
+  const closeDetail = () => {
+    fetchCustomers();
+    const qs = searchParams.toString();
+    navigate(`/admin/customers${qs ? `?${qs}` : ''}`);
+  };
 
   return (
     <div className="relative flex h-full min-h-screen min-h-[100dvh] w-full flex-col max-w-md mx-auto bg-[#f6f7f8] overflow-x-hidden pb-20 sm:pb-24">
@@ -127,6 +151,19 @@ const Customers = () => {
             <p className="text-[10px] sm:text-xs text-blue-700 font-medium">Total</p>
           </div>
         </div>
+
+        {/* Broker Filter Chip */}
+        {brokerId && (
+          <div className="flex items-center gap-2 mb-3 px-1">
+            <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 rounded-full px-3 py-1 text-xs text-blue-700 font-medium">
+              <span className="material-symbols-outlined text-[14px]">corporate_fare</span>
+              <span>Filtered by broker: {brokerFilterName || brokerId}</span>
+              <button onClick={clearBrokerFilter} className="ml-1 flex items-center text-blue-500 hover:text-blue-700">
+                <span className="material-symbols-outlined text-[14px]">close</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Search */}
         <div className="relative mb-3">

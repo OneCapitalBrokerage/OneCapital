@@ -126,7 +126,7 @@ const Watchlist = () => {
   const navigate = useNavigate();
   const { user: authUser } = useAuth();
   const { ticksRef, tickUpdatedAtRef, subscribe, unsubscribe, isConnected } = useMarketData();
-  const { isCustomerTradeAllowed, marketClosedReason } = useCustomerTradingGate();
+  const { isCustomerTradeAllowed, marketClosedReason, isTradingAllowed, getClosedMessage } = useCustomerTradingGate();
   const apiBase = useMemo(() => {
     const base = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
     return base.replace(/\/$/, '');

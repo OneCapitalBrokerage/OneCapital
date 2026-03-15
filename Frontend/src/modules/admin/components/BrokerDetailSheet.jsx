@@ -12,6 +12,11 @@ const BrokerDetailSheet = ({ brokerId, onClose }) => {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
 
+  // Credentials state
+  const [credentials, setCredentials] = useState(null);
+  const [showCredentials, setShowCredentials] = useState(false);
+  const [credLoading, setCredLoading] = useState(false);
+
   // Reference code edit state
   const [editingRefCode, setEditingRefCode] = useState(false);
   const [refCodeInput, setRefCodeInput] = useState('');
@@ -32,8 +37,26 @@ const BrokerDetailSheet = ({ brokerId, onClose }) => {
   }, [brokerId]);
 
   useEffect(() => {
-    if (brokerId) fetchBroker();
+    if (brokerId) {
+      setCredentials(null);
+      setShowCredentials(false);
+      fetchBroker();
+    }
   }, [fetchBroker]);
+
+  const handleViewCredentials = async () => {
+    if (credentials) { setShowCredentials(v => !v); return; }
+    setCredLoading(true);
+    try {
+      const res = await adminApi.getBrokerCredentials(brokerId);
+      setCredentials(res.credentials);
+      setShowCredentials(true);
+    } catch (err) {
+      setError(err.message || 'Failed to fetch credentials');
+    } finally {
+      setCredLoading(false);
+    }
+  };
 
   const handleBlock = async () => {
     setActionLoading(true);
@@ -163,7 +186,7 @@ const BrokerDetailSheet = ({ brokerId, onClose }) => {
                     {broker.ownerName && broker.ownerName !== broker.name && (
                       <p className="text-xs text-gray-500">{broker.ownerName}</p>
                     )}
-                    <p className="text-xs text-gray-500 truncate">{broker.email}</p>
+                    <p className="text-xs text-gray-500 truncate">{broker.email || '—'}</p>
                   </div>
                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold shrink-0 ${statusColor(broker.status)}`}>
                     {broker.status}
@@ -254,6 +277,48 @@ const BrokerDetailSheet = ({ brokerId, onClose }) => {
                       >
                         Cancel
                       </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Credentials */}
+              <div className="bg-gray-50 rounded-xl p-4">
+                <button
+                  onClick={handleViewCredentials}
+                  className="w-full flex items-center justify-between"
+                >
+                  <div className="flex items-center gap-2">
+                    <div className="p-2 rounded-full bg-blue-50 text-[#137fec]">
+                      <span className="material-symbols-outlined text-[18px]">key</span>
+                    </div>
+                    <div className="text-left">
+                      <p className="text-xs font-bold">View Credentials</p>
+                      <p className="text-[10px] text-gray-500">Broker ID + password</p>
+                    </div>
+                  </div>
+                  {credLoading
+                    ? <div className="h-4 w-4 rounded-full border-2 border-gray-200 border-t-[#137fec] animate-spin" />
+                    : <span className="material-symbols-outlined text-gray-400 text-[18px]">{showCredentials ? 'expand_less' : 'expand_more'}</span>
+                  }
+                </button>
+                {showCredentials && credentials && (
+                  <div className="mt-3 grid grid-cols-1 gap-2 text-[11px]">
+                    <div className="bg-white rounded-lg px-3 py-2 flex justify-between">
+                      <span className="text-gray-400">Broker ID</span>
+                      <span className="font-semibold font-mono">{credentials.brokerId}</span>
+                    </div>
+                    <div className="bg-white rounded-lg px-3 py-2 flex justify-between">
+                      <span className="text-gray-400">Email</span>
+                      <span className="font-semibold">{credentials.email || '—'}</span>
+                    </div>
+                    <div className="bg-white rounded-lg px-3 py-2 flex justify-between">
+                      <span className="text-gray-400">Phone</span>
+                      <span className="font-semibold">{credentials.phone || '—'}</span>
+                    </div>
+                    <div className="bg-white rounded-lg px-3 py-2 flex justify-between">
+                      <span className="text-gray-400">Password</span>
+                      <span className="font-semibold font-mono">{credentials.password}</span>
                     </div>
                   </div>
                 )}

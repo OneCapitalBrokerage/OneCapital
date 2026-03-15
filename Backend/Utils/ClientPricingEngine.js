@@ -14,9 +14,13 @@ export const INITIAL_CLIENT_PRICING = Object.freeze({
   },
   spread: {
     cash: 0,
+    cash_mode: 'ABSOLUTE',
     future: 0,
+    future_mode: 'ABSOLUTE',
     option: 0,
+    option_mode: 'ABSOLUTE',
     mcx: 0,
+    mcx_mode: 'ABSOLUTE',
   },
 });
 
@@ -39,11 +43,20 @@ const pickLegacySymmetricRate = (values, fallback) => {
   return Math.max(...finite);
 };
 
+const normalizeSpreadMode = (mode) => {
+  const m = String(mode || '').toUpperCase();
+  return m === 'PERCENT' ? 'PERCENT' : 'ABSOLUTE';
+};
+
 const normalizeSpread = (spread = {}) => ({
   cash: clamp(toNumber(spread.cash, INITIAL_CLIENT_PRICING.spread.cash), -1000, 1000),
+  cash_mode: normalizeSpreadMode(spread.cash_mode),
   future: clamp(toNumber(spread.future, INITIAL_CLIENT_PRICING.spread.future), -1000, 1000),
+  future_mode: normalizeSpreadMode(spread.future_mode),
   option: clamp(toNumber(spread.option, INITIAL_CLIENT_PRICING.spread.option), -1000, 1000),
+  option_mode: normalizeSpreadMode(spread.option_mode),
   mcx: clamp(toNumber(spread.mcx, INITIAL_CLIENT_PRICING.spread.mcx), -1000, 1000),
+  mcx_mode: normalizeSpreadMode(spread.mcx_mode),
 });
 
 const normalizeBrokerage = (brokerage = {}) => {
@@ -169,6 +182,8 @@ export const inferPricingBucket = ({ exchange, segment, symbol, orderType }) => 
     ordType === 'OPTION_CHAIN';
   if (isOption) return 'OPTION';
 
+  if (ex.includes('MCX') || seg.includes('MCX')) return 'MCX';
+
   const isFuture =
     sym.includes('FUT') ||
     seg.includes('FUT') ||
@@ -176,9 +191,7 @@ export const inferPricingBucket = ({ exchange, segment, symbol, orderType }) => 
     seg.includes('BFO') ||
     seg.includes('F&O') ||
     seg === 'FO' ||
-    seg === 'NRML' ||
-    ex.includes('MCX') ||
-    seg.includes('MCX');
+    seg === 'NRML';
   if (isFuture) return 'FUTURE';
 
   return 'CASH';
@@ -205,11 +218,28 @@ export const getSpreadForBucket = (pricing, bucket) => {
   return toNumber(spread.cash, 0);
 };
 
-export const applySpreadToPrice = ({ rawPrice, side, spread }) => {
+export const getSpreadConfigForBucket = (pricing, bucket) => {
+  const spread = pricing?.spread || INITIAL_CLIENT_PRICING.spread;
+  const key = String(bucket || 'CASH').toUpperCase();
+  if (key === 'MCX') return { value: toNumber(spread.mcx, 0), mode: normalizeSpreadMode(spread.mcx_mode) };
+  if (key === 'OPTION') return { value: toNumber(spread.option, 0), mode: normalizeSpreadMode(spread.option_mode) };
+  if (key === 'FUTURE') return { value: toNumber(spread.future, 0), mode: normalizeSpreadMode(spread.future_mode) };
+  return { value: toNumber(spread.cash, 0), mode: normalizeSpreadMode(spread.cash_mode) };
+};
+
+export const applySpreadToPrice = ({ rawPrice, side, spread, spreadMode }) => {
   const safeRaw = toNumber(rawPrice, 0);
-  const safeSpread = toNumber(spread, 0);
   const normalizedSide = normalizeSide(side);
-  const appliedSpread = normalizedSide === 'BUY' ? safeSpread : -safeSpread;
+  const mode = normalizeSpreadMode(spreadMode);
+
+  let resolvedSpread;
+  if (mode === 'PERCENT') {
+    resolvedSpread = round2(safeRaw * toNumber(spread, 0) / 100);
+  } else {
+    resolvedSpread = toNumber(spread, 0);
+  }
+
+  const appliedSpread = normalizedSide === 'BUY' ? resolvedSpread : -resolvedSpread;
   const effectivePrice = round2(safeRaw + appliedSpread);
 
   return {

@@ -13,6 +13,12 @@ const FILTER_OPTIONS = [
   { key: 'pending', label: 'Pending' },
   { key: 'verified', label: 'Approved' },
 ];
+const PAYMENT_METHOD_LABELS = {
+  upi: 'UPI',
+  imps: 'IMPS',
+  neft: 'NEFT',
+  rtgs: 'RTGS',
+};
 
 const toFiniteNumber = (value) => {
   const n = Number(value);
@@ -253,6 +259,9 @@ const PaymentVerification = () => {
                         <p className="text-base sm:text-lg font-bold leading-none mb-1">{formatCurrency(request.amount)}</p>
                         <p className="text-[#617589] text-[11px]">
                           {customerName} {customerId ? `• ${customerId}` : ''}
+                        </p>
+                        <p className="text-[#137fec] text-[10px] font-semibold mt-1">
+                          {PAYMENT_METHOD_LABELS[String(request.paymentMethod || 'upi').toLowerCase()] || 'UPI'}
                         </p>
                       </div>
                     </div>

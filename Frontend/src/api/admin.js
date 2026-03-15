@@ -223,6 +223,11 @@ const adminApi = {
     return response.data;
   },
 
+  getBrokerCredentials: async (brokerId) => {
+    const response = await api.get(`/admin/brokers/${brokerId}/credentials`);
+    return response.data;
+  },
+
   // ========================
   // KYC
   // ========================

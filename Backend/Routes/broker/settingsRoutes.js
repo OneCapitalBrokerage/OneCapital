@@ -9,6 +9,7 @@ import {
   updateClientInfo,
   updateNotifications,
   getClientInfoUploadSignature,
+  discardClientInfoQrUpload,
 } from '../../Controllers/broker/SettingsController.js';
 
 const router = express.Router();
@@ -43,6 +44,13 @@ router.put('/settings/client-info', updateClientInfo);
  * @access  Private (Broker only)
  */
 router.get('/settings/client-info/upload-signature', getClientInfoUploadSignature);
+
+/**
+ * @route   POST /api/broker/settings/client-info/qr/discard
+ * @desc    Delete a temporary QR upload that was not saved
+ * @access  Private (Broker only)
+ */
+router.post('/settings/client-info/qr/discard', discardClientInfoQrUpload);
 
 /**
  * @route   PUT /api/broker/settings/notifications

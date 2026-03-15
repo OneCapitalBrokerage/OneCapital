@@ -4,7 +4,13 @@
  * When an option order is placed, the margin is deducted from the respective bucket
  * (intraday.used_limit for MIS, overnight.available_limit for CNC/NRML).
  * Total option usage across ALL buckets cannot exceed the single combined cap.
+ *
+ * MCX commodity options use a separate commodity_option bucket:
+ * - Cap = commodity_option.limit_percentage % of commodity_delivery.available_limit
+ * - Usage tracked in commodity_option.used
  */
+
+import { isMCX } from './mcx/resolver.js';
 
 const toNumber = (value) => {
     const n = Number(value);
@@ -31,8 +37,26 @@ const initOptionLimit = (fund, typeKey) => {
     }
 };
 
-export const checkOptionLimit = (fund, product, requiredMargin) => {
+export const checkOptionLimit = (fund, product, requiredMargin, { exchange, segment } = {}) => {
     const productNorm = String(product).trim().toUpperCase();
+    const mcx = isMCX({ exchange, segment });
+
+    // MCX commodity options use separate commodity_option bucket
+    if (mcx) {
+        const limitPercent = fund.commodity_option?.limit_percentage ?? 10;
+        const commodityAvailable = nonNegative(fund.commodity_delivery?.available_limit);
+        const dailyCap = commodityAvailable * (limitPercent / 100);
+        const used = nonNegative(fund.commodity_option?.used);
+
+        if ((used + requiredMargin) > dailyCap) {
+            return {
+                allowed: false,
+                message: `Commodity Option Limit Exceeded (${limitPercent}% of commodity margin). Max: ${dailyCap.toFixed(2)}, Used: ${used.toFixed(2)}, Required: ${requiredMargin.toFixed(2)}`,
+            };
+        }
+        return { allowed: true };
+    }
+
     const isOvernight = productNorm === 'NRML' || productNorm === 'CNC';
     const typeKey = isOvernight ? 'overnight' : 'intraday';
 
@@ -80,8 +104,18 @@ export const checkOptionLimit = (fund, product, requiredMargin) => {
     return { allowed: true };
 };
 
-export const updateOptionUsage = (fund, product, amount) => {
+export const updateOptionUsage = (fund, product, amount, { exchange, segment } = {}) => {
     if (amount <= 0) return;
+
+    const mcx = isMCX({ exchange, segment });
+
+    // MCX commodity option usage
+    if (mcx) {
+        fund.commodity_option.used = nonNegative(fund.commodity_option?.used) + Number(amount);
+        if (fund.markModified) fund.markModified('commodity_option');
+        console.log(`[OptionLimit] MCX commodity option: +${amount}`);
+        return;
+    }
 
     const productNorm = String(product).trim().toUpperCase();
     const isOvernight = productNorm === 'NRML' || productNorm === 'CNC';
@@ -112,8 +146,18 @@ export const updateOptionUsage = (fund, product, amount) => {
     console.log(`[OptionLimit] Updated ${typeKey}: +${amount}, Margin deducted from ${typeKey}`);
 };
 
-export const rollbackOptionUsage = (fund, product, amount) => {
+export const rollbackOptionUsage = (fund, product, amount, { exchange, segment } = {}) => {
     if (amount <= 0) return;
+
+    const mcx = isMCX({ exchange, segment });
+
+    // MCX commodity option rollback
+    if (mcx) {
+        fund.commodity_option.used = Math.max(0, nonNegative(fund.commodity_option?.used) - Number(amount));
+        if (fund.markModified) fund.markModified('commodity_option');
+        console.log(`[OptionLimit] MCX commodity option rollback: -${amount}`);
+        return;
+    }
 
     const productNorm = String(product).trim().toUpperCase();
     const isOvernight = productNorm === 'NRML' || productNorm === 'CNC';

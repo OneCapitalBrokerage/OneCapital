@@ -1,4 +1,5 @@
 import BrokerModel from '../Model/Auth/BrokerModel.js';
+import CustomerModel from '../Model/Auth/CustomerModel.js';
 import FundModel from '../Model/FundManagement/FundModel.js';
 import { writeAuditFailure, writeAuditSuccess } from '../Utils/AuditLogger.js';
 import {
@@ -64,14 +65,29 @@ const runWeeklySettlementForBroker = async ({
   const funds = await FundModel.find(fundQuery)
     .select('_id customer_id customer_id_str broker_id_str pnl_balance transactions last_calculated_at');
 
+  // Build a settlement-enabled lookup for all affected customers
+  const customerIdStrs = funds.map((f) => f.customer_id_str).filter(Boolean);
+  const settlementMap = await CustomerModel
+    .find({ customer_id_str: { $in: customerIdStrs } })
+    .select('customer_id_str settlement_enabled')
+    .lean()
+    .then((docs) => new Map(docs.map((d) => [d.customer_id_str, d.settlement_enabled])));
+
   let created = 0;
   let skippedExisting = 0;
+  let skippedDisabled = 0;
   let failed = 0;
   const errors = [];
 
   for (const fund of funds) {
     try {
       if (!Array.isArray(fund.transactions)) fund.transactions = [];
+
+      // Skip customers with settlement explicitly disabled (=== false; undefined treated as true)
+      if (settlementMap.get(fund.customer_id_str) === false) {
+        skippedDisabled += 1;
+        continue;
+      }
 
       const existingInWindow = hasSettlementInSettlementWindow({
         transactions: fund.transactions,
@@ -132,6 +148,7 @@ const runWeeklySettlementForBroker = async ({
     totalFunds: funds.length,
     created,
     skippedExisting,
+    skippedDisabled,
     failed,
     force: Boolean(force),
     note: String(note || ''),
@@ -144,7 +161,7 @@ const runWeeklySettlementForBroker = async ({
     type: 'transaction',
     eventType: 'WEEKLY_SETTLEMENT_RUN',
     category: 'funds',
-    message: `Weekly settlement run ${runRef} for broker ${brokerIdStr} completed in ${mode} mode. ${created} fund records were settled, ${skippedExisting} were already settled in the current weekend cycle, and ${failed} failed.`,
+    message: `Weekly settlement run ${runRef} for broker ${brokerIdStr} completed in ${mode} mode. ${created} fund records were settled, ${skippedExisting} were already settled in the current weekend cycle, ${skippedDisabled} were skipped (settlement disabled), and ${failed} failed.`,
     entity: {
       type: 'settlement_run',
       ref: runRef,

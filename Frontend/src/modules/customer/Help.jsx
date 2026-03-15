@@ -7,21 +7,27 @@ const Help = () => {
   const navigate = useNavigate();
   const [activeSession, setActiveSession] = useState(null);
   const [loadingSession, setLoadingSession] = useState(true);
+  const [brokerSupportContact, setBrokerSupportContact] = useState('');
 
-  // Check for existing support session
   useEffect(() => {
-    const checkSession = async () => {
+    const init = async () => {
       try {
         setLoadingSession(true);
-        const response = await customerApi.getCurrentSupportSession();
-        setActiveSession(response.session);
-      } catch {
-        // Ignore errors
+        const [sessionRes, profileRes] = await Promise.allSettled([
+          customerApi.getCurrentSupportSession(),
+          customerApi.getProfile(),
+        ]);
+        if (sessionRes.status === 'fulfilled') {
+          setActiveSession(sessionRes.value.session);
+        }
+        if (profileRes.status === 'fulfilled') {
+          setBrokerSupportContact(profileRes.value.profile?.brokerSupportContact || '');
+        }
       } finally {
         setLoadingSession(false);
       }
     };
-    checkSession();
+    init();
   }, []);
 
   const handleItemClick = (id) => {
@@ -30,33 +36,36 @@ const Help = () => {
         navigate('/support/chat');
         break;
       case 'email':
-        window.location.href = 'mailto:support@onecapital.com';
+        window.location.href = 'mailto:support@onecapital.trade';
         break;
       case 'phone':
-        window.location.href = 'tel:+911800123456';
+        if (brokerSupportContact) {
+          window.location.href = `tel:${brokerSupportContact.replace(/\s+/g, '')}`;
+        }
         break;
       default:
-        // Other items not yet implemented
         break;
     }
   };
 
   const helpItems = [
-    { id: 'faq', icon: 'help', label: 'FAQs', description: 'Find answers to common questions' },
-    { 
-      id: 'chat', 
-      icon: 'chat', 
-      label: 'Live Chat', 
-      description: activeSession 
+    {
+      id: 'chat',
+      icon: 'chat',
+      label: 'Live Chat',
+      description: activeSession
         ? `Continue chat: ${activeSession.subject?.substring(0, 30)}${activeSession.subject?.length > 30 ? '...' : ''}`
         : 'Chat with our support team',
       badge: activeSession?.customerUnreadCount > 0 ? activeSession.customerUnreadCount : null,
       highlight: !!activeSession,
     },
-    { id: 'email', icon: 'mail', label: 'Email Support', description: 'support@onecapital.com' },
-    { id: 'phone', icon: 'phone', label: 'Call Us', description: '+91 1800 123 4567' },
-    { id: 'guide', icon: 'menu_book', label: 'User Guide', description: 'Learn how to use the app' },
-    { id: 'feedback', icon: 'rate_review', label: 'Feedback', description: 'Share your experience' },
+    { id: 'email', icon: 'mail', label: 'Email Support', description: 'support@onecapital.trade' },
+    {
+      id: 'phone',
+      icon: 'phone',
+      label: 'Call Us',
+      description: brokerSupportContact,
+    },
   ];
 
   return (
@@ -71,12 +80,12 @@ const Help = () => {
 
         <div className="space-y-3">
           {helpItems.map((item) => (
-            <button 
-              key={item.id} 
+            <button
+              key={item.id}
               onClick={() => handleItemClick(item.id)}
               className={`w-full flex items-center gap-4 p-4 bg-white dark:bg-[#111b17] rounded-xl border hover:shadow-md transition-shadow ${
-                item.highlight 
-                  ? 'border-primary dark:border-primary ring-1 ring-primary/20' 
+                item.highlight
+                  ? 'border-primary dark:border-primary ring-1 ring-primary/20'
                   : 'border-gray-100 dark:border-[#22352d]'
               }`}
             >
@@ -97,7 +106,7 @@ const Help = () => {
                   )}
                 </div>
                 <p className="text-sm text-gray-500 dark:text-[#9cb7aa]">
-                  {item.id === 'chat' && loadingSession ? 'Checking...' : item.description}
+                  {loadingSession ? 'Loading...' : item.description}
                 </p>
               </div>
               <span className="material-symbols-outlined text-gray-400">chevron_right</span>

@@ -21,9 +21,13 @@ const ClientPricingSchema = new Schema(
 
     spread: {
       cash: { type: Number, default: 0 },
+      cash_mode: { type: String, enum: ['ABSOLUTE', 'PERCENT'], default: 'ABSOLUTE' },
       future: { type: Number, default: 0 },
+      future_mode: { type: String, enum: ['ABSOLUTE', 'PERCENT'], default: 'ABSOLUTE' },
       option: { type: Number, default: 0 },
+      option_mode: { type: String, enum: ['ABSOLUTE', 'PERCENT'], default: 'ABSOLUTE' },
       mcx: { type: Number, default: 0 },
+      mcx_mode: { type: String, enum: ['ABSOLUTE', 'PERCENT'], default: 'ABSOLUTE' },
     },
 
     updated_by: { type: Schema.Types.ObjectId, ref: 'Broker' },

@@ -260,8 +260,14 @@ const approveRegistration = asyncHandler(async (req, res) => {
       customer_id_str: customerId,
       broker_id_str: brokerIdStr,
       net_available_balance: 0,
-      intraday: { available_limit: 0, used_limit: 0 },
-      overnight: { available_limit: 0 },
+      available_balance: 0,
+      withdrawable_balance: 0,
+      intraday: { available_limit: 0, used_limit: 0, available: 0, used: 0 },
+      overnight: { available_limit: 0, used_limit: 0 },
+      delivery: { available: 0, used: 0, available_limit: 0, used_limit: 0 },
+      option_limit_percentage: 10,
+      commodity_delivery: { available_limit: 0, used_limit: 0 },
+      commodity_option: { limit_percentage: 10, used: 0 },
     }], findOptions);
 
     const bank = reg.bank_details || {};

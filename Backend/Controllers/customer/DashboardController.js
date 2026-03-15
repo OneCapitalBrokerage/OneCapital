@@ -7,6 +7,7 @@ import OrderModel from '../../Model/Trading/OrdersModel.js';
 import HoldingModel from '../../Model/Trading/HoldingModel.js';
 import PositionsModel from '../../Model/Trading/PositionsModel.js';
 import CustomerModel from '../../Model/Auth/CustomerModel.js';
+import BrokerModel from '../../Model/Auth/BrokerModel.js';
 
 const toNumber = (value, fallback = 0) => {
   const n = Number(value);
@@ -112,6 +113,14 @@ const getDashboard = asyncHandler(async (req, res) => {
 const getProfile = asyncHandler(async (req, res) => {
   const customer = req.user;
 
+  let brokerSupportContact = '';
+  if (customer.broker_id) {
+    const broker = await BrokerModel.findById(customer.broker_id)
+      .select('support_contact')
+      .lean();
+    brokerSupportContact = broker?.support_contact || '';
+  }
+
   res.status(200).json({
     success: true,
     profile: {
@@ -132,6 +141,7 @@ const getProfile = asyncHandler(async (req, res) => {
       impersonatorRole: req.user?.impersonatorRole || null,
       createdAt: customer.createdAt,
       lastLogin: customer.last_login,
+      brokerSupportContact,
     },
   });
 });

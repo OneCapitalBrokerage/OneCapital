@@ -13,6 +13,7 @@ import {
   inferPricingBucket,
   inferSpreadBucket,
   getSpreadForBucket,
+  getSpreadConfigForBucket,
   applySpreadToPrice,
   buildEntryBrokerageSnapshot,
   resolveLots,
@@ -23,9 +24,12 @@ import {
   updateTriggerInWatchlist,
 } from '../../Utils/OrderManager.js';
 import { logFailedOrderAttempt } from '../../Utils/OrderAttemptLogger.js';
-import { getStandardMarketStatus } from '../../Utils/tradingSession.js';
-import { releaseMarginOnClose } from '../../services/marginLifecycle.js';
+import { getStandardMarketStatus, getMarketStatusForInstrument } from '../../Utils/tradingSession.js';
+import { releaseMarginOnClose, getMarginBucket } from '../../services/marginLifecycle.js';
+import { canBrokerExtendValidity } from '../../services/orderValidity.js';
 import { syncGlobalWatchlistTokens } from '../../sockets/io.js';
+import { normalizeMcxOrder } from '../../Utils/mcx/normalizer.js';
+import { isMCX } from '../../Utils/mcx/resolver.js';
 
 const toNumber = (value, fallback = 0) => {
   const n = Number(value);
@@ -34,8 +38,9 @@ const toNumber = (value, fallback = 0) => {
 
 const normalizeProduct = (value) => String(value || '').trim().toUpperCase();
 const isLongTermProduct = (value) => ['CNC', 'NRML'].includes(normalizeProduct(value));
-const isBrokerImpersonationBypass = (req) =>
-  req.user?.isImpersonation && req.user?.impersonatorRole === 'broker';
+const isPrivilegedImpersonation = (req) =>
+  req.user?.isImpersonation &&
+  ['broker', 'admin'].includes(req.user?.impersonatorRole);
 const ORDER_DATE_FIELDS = new Set(['createdAt', 'placed_at', 'closed_at', 'exit_at']);
 
 const resolveOrderDateField = (input) => {
@@ -59,12 +64,15 @@ const parseOrderDateParam = (value, endOfDay = false) => {
   return parsed;
 };
 
-const marketClosedPayload = () => {
-  const marketStatus = getStandardMarketStatus();
+const marketClosedPayload = ({ exchange, segment } = {}) => {
+  const marketStatus = getMarketStatusForInstrument({ exchange, segment });
+  const isMcx = marketStatus.sessionType === 'MCX';
   return {
     success: false,
     code: 'MARKET_CLOSED',
-    message: 'Market Closed. Open From 9:15AM To 3:15PM On Working Days',
+    message: isMcx
+      ? 'MCX Market Closed. Open From 9:15AM To 11:00PM On Working Days'
+      : 'Market Closed. Open From 9:15AM To 3:15PM On Working Days',
     marketStatus: {
       isOpen: marketStatus.isOpen,
       tradingDay: marketStatus.tradingDay,
@@ -230,7 +238,7 @@ const placeOrder = asyncHandler(async (req, res) => {
 
   if (!resolvedExchange || !resolvedSegment || toNumber(requestedLotSize, 0) <= 0) {
     instrumentDoc = await Instrument.findOne({ instrument_token: String(instrumentToken) })
-      .select('exchange segment lot_size')
+      .select('exchange segment lot_size name tick_size')
       .lean();
     resolvedExchange = resolvedExchange || instrumentDoc?.exchange || 'NSE';
     resolvedSegment = resolvedSegment || instrumentDoc?.segment || 'NSE';
@@ -253,39 +261,80 @@ const placeOrder = asyncHandler(async (req, res) => {
     symbol,
     orderType,
   });
-  const spreadForBucket = getSpreadForBucket(pricingConfig, spreadBucket);
+  const spreadConfig = getSpreadConfigForBucket(pricingConfig, spreadBucket);
+  const spreadForBucket = spreadConfig.value;
   const entryPricing = applySpreadToPrice({
     rawPrice: rawEntryPrice,
     side: sideNorm,
     spread: spreadForBucket,
+    spreadMode: spreadConfig.mode,
   });
   const effectiveEntryPrice = entryPricing.effectivePrice;
-  const resolvedLotSize = Math.max(1, toNumber(requestedLotSize ?? instrumentDoc?.lot_size, 1));
-  const resolvedLots = resolveLots({
+  let resolvedLotSize = Math.max(1, toNumber(requestedLotSize ?? instrumentDoc?.lot_size, 1));
+  let finalQty = qtyNum;
+  let resolvedLots = resolveLots({
     lots,
     quantity: qtyNum,
     lotSize: resolvedLotSize,
   });
+
+  // MCX normalization: override quantity and lotSize from root spec
+  const mcxNorm = normalizeMcxOrder({
+    lots: resolvedLots,
+    exchange: resolvedExchange,
+    segment: resolvedSegment,
+    name: instrumentDoc?.name,
+    tradingsymbol: symbol,
+    tickSize: instrumentDoc?.tick_size,
+  });
+  let mcxUnitsPerContract = 0;
+  if (mcxNorm) {
+    finalQty = mcxNorm.quantity;
+    resolvedLotSize = mcxNorm.units_per_contract;
+    resolvedLots = mcxNorm.lots;
+    mcxUnitsPerContract = mcxNorm.units_per_contract;
+  }
+
+  // MCX NRML rejection: carryforward must use CNC
+  const orderIsMcx = isMCX({ exchange: resolvedExchange, segment: resolvedSegment });
+  if (orderIsMcx && productNorm === 'NRML') {
+    return failPlacement({
+      status: 400,
+      message: 'MCX carryforward must use CNC, not NRML.',
+      code: 'MCX_NRML_NOT_ALLOWED',
+    });
+  }
+
   const entryBrokerageSnapshot = buildEntryBrokerageSnapshot({
     pricing: pricingConfig,
     bucket: pricingBucket,
     side: sideNorm,
-    quantity: qtyNum,
+    quantity: finalQty,
     lotSize: resolvedLotSize,
     lots: resolvedLots,
     effectivePrice: effectiveEntryPrice,
   });
 
   // Calculate margin required
-  const orderValue = effectiveEntryPrice * qtyNum;
+  const orderValue = effectiveEntryPrice * finalQty;
   const marginRequired = orderValue; // Full notional for all products (canonical rule)
 
-  // Check margin
-  const availableMargin = (fund.intraday?.available_limit || 0) - (fund.intraday?.used_limit || 0);
+  // Check margin against the correct bucket
+  const marginBucket = getMarginBucket(productNorm, { exchange: resolvedExchange, segment: resolvedSegment });
+  let availableMargin;
+  if (marginBucket === 'commodity_delivery') {
+    availableMargin = toNumber(fund.commodity_delivery?.available_limit) - toNumber(fund.commodity_delivery?.used_limit);
+  } else if (marginBucket === 'delivery') {
+    availableMargin = toNumber(fund.overnight?.available_limit);
+  } else {
+    availableMargin = toNumber(fund.intraday?.available_limit) - toNumber(fund.intraday?.used_limit);
+  }
   if (sideNorm === 'BUY' && availableMargin < marginRequired) {
     return failPlacement({
       status: 400,
-      message: 'Insufficient margin.',
+      message: marginBucket === 'commodity_delivery'
+        ? 'Insufficient Commodity Margin.'
+        : 'Insufficient margin.',
       code: 'INSUFFICIENT_FUNDS',
       extraResponse: {
         required: marginRequired,
@@ -310,7 +359,7 @@ const placeOrder = asyncHandler(async (req, res) => {
       customer_id: customerId,
       symbol,
       side: sideNorm,
-      quantity: qtyNum,
+      quantity: finalQty,
       price: effectiveEntryPrice,
       raw_entry_price: entryPricing.rawPrice,
       effective_entry_price: effectiveEntryPrice,
@@ -322,6 +371,7 @@ const placeOrder = asyncHandler(async (req, res) => {
       instrument_token: instrumentToken,
       lot_size: resolvedLotSize,
       lots: resolvedLots,
+      units_per_contract: mcxUnitsPerContract,
       validity,
       trigger_price: triggerPriceNum,
       disclosed_quantity: disclosedQuantity,
@@ -440,7 +490,9 @@ const getOrders = asyncHandler(async (req, res) => {
 
   res.status(200).json({
     success: true,
-    orders: orders.map(o => ({
+    orders: orders.map(o => {
+      const extCheck = canBrokerExtendValidity(o);
+      return ({
       id: o._id,
       orderId: o.order_id,
       symbol: o.symbol,
@@ -455,6 +507,7 @@ const getOrders = asyncHandler(async (req, res) => {
       instrument_token: o.instrument_token,
       lot_size: o.lot_size,
       lots: o.lots,
+      units_per_contract: o.units_per_contract || 0,
       stop_loss: o.stop_loss,
       target: o.target,
       exit_price: o.exit_price,
@@ -485,7 +538,10 @@ const getOrders = asyncHandler(async (req, res) => {
       validity_started_at: o.validity_started_at,
       validity_expires_at: o.validity_expires_at,
       validity_extended_count: o.validity_extended_count,
-    })),
+      can_extend_validity: extCheck.ok,
+      extend_validity_reason: extCheck.reason || null,
+    });
+    }),
     filters: {
       status: status && status !== 'all' ? String(status).toUpperCase() : 'all',
       dateField: resolveOrderDateField(dateField),
@@ -527,14 +583,14 @@ const modifyOrder = asyncHandler(async (req, res) => {
     });
   }
 
-  if (isLongTermProduct(order.product) && !isBrokerImpersonationBypass(req)) {
-    const marketStatus = getStandardMarketStatus();
+  if (isLongTermProduct(order.product) && !isPrivilegedImpersonation(req)) {
+    const marketStatus = getMarketStatusForInstrument({ exchange: order.exchange, segment: order.segment });
     if (!marketStatus.isOpen) {
-      return res.status(403).json(marketClosedPayload());
+      return res.status(403).json(marketClosedPayload({ exchange: order.exchange, segment: order.segment }));
     }
   }
 
-  if ((stopLoss !== undefined || target !== undefined) && isLongTermProduct(order.product) && !isBrokerImpersonationBypass(req)) {
+  if ((stopLoss !== undefined || target !== undefined) && isLongTermProduct(order.product) && !isPrivilegedImpersonation(req)) {
     const currentStopLoss = toNumber(order.stop_loss, 0);
     const currentTarget = toNumber(order.target, 0);
     const nextStopLoss = stopLoss !== undefined ? Number(stopLoss) : currentStopLoss;
@@ -578,11 +634,13 @@ const modifyOrder = asyncHandler(async (req, res) => {
       symbol: order.symbol,
       orderType: order.order_type,
     });
-    const spreadForBucket = getSpreadForBucket(pricingConfig, spreadBucket);
+    const modifySpreadConfig = getSpreadConfigForBucket(pricingConfig, spreadBucket);
+    const spreadForBucket = modifySpreadConfig.value;
     const entryPricing = applySpreadToPrice({
       rawPrice,
       side: order.side,
       spread: spreadForBucket,
+      spreadMode: modifySpreadConfig.mode,
     });
 
     order.raw_entry_price = entryPricing.rawPrice;
@@ -620,11 +678,19 @@ const modifyOrder = asyncHandler(async (req, res) => {
     order.lots = nextLots;
   }
 
-  order.lots = resolveLots({
-    lots: order.lots,
-    quantity: order.quantity,
-    lotSize: order.lot_size,
-  });
+  // MCX: recalculate quantity from lots using stored units_per_contract
+  const upc = toNumber(order.units_per_contract, 0);
+  if (upc > 0) {
+    order.lots = Math.max(1, Math.round(toNumber(order.lots, 1)));
+    order.quantity = order.lots * upc;
+    order.lot_size = upc;
+  } else {
+    order.lots = resolveLots({
+      lots: order.lots,
+      quantity: order.quantity,
+      lotSize: order.lot_size,
+    });
+  }
 
   if (triggerPrice !== undefined) order.trigger_price = triggerPrice;
   if (stopLoss !== undefined) {
@@ -757,10 +823,10 @@ const cancelOrder = asyncHandler(async (req, res) => {
     });
   }
 
-  if (isLongTermProduct(order.product) && !isBrokerImpersonationBypass(req)) {
-    const marketStatus = getStandardMarketStatus();
+  if (isLongTermProduct(order.product) && !isPrivilegedImpersonation(req)) {
+    const marketStatus = getMarketStatusForInstrument({ exchange: order.exchange, segment: order.segment });
     if (!marketStatus.isOpen) {
-      return res.status(403).json(marketClosedPayload());
+      return res.status(403).json(marketClosedPayload({ exchange: order.exchange, segment: order.segment }));
     }
   }
 

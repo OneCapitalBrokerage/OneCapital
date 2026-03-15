@@ -7,7 +7,8 @@ import CustomerModel from '../../Model/Auth/CustomerModel.js';
 import BrokerModel from '../../Model/Auth/BrokerModel.js';
 import DeletedCustomerModel from '../../Model/DeletedCustomerModel.js';
 import FundModel from '../../Model/FundManagement/FundModel.js';
-import { reserveDeliveryForHoldConversion, refundMarginImmediate } from '../../services/marginLifecycle.js';
+import { reserveDeliveryForHoldConversion, reserveCommodityDeliveryForHoldConversion, refundMarginImmediate, reserveMargin, getMarginBucket } from '../../services/marginLifecycle.js';
+import { isMCX } from '../../Utils/mcx/resolver.js';
 import { resolveOrderValidity, canBrokerExtendValidity, extendValidityByDays } from '../../services/orderValidity.js';
 import OrderModel from '../../Model/Trading/OrdersModel.js';
 import ClientPricingModel from '../../Model/Trading/ClientPricingModel.js';
@@ -69,6 +70,11 @@ const toNumber = (value, fallback = null) => {
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
+const normalizeSpreadModeValue = (mode) => {
+  const m = String(mode || '').toUpperCase();
+  return m === 'PERCENT' ? 'PERCENT' : 'ABSOLUTE';
+};
+
 const mapPricingConfigToResponse = (pricing) => ({
   brokerage: {
     cashPercent:
@@ -80,9 +86,13 @@ const mapPricingConfigToResponse = (pricing) => ({
   },
   spread: {
     cash: pricing?.spread?.cash ?? INITIAL_CLIENT_PRICING_RESPONSE.spread.cash,
+    cash_mode: normalizeSpreadModeValue(pricing?.spread?.cash_mode),
     future: pricing?.spread?.future ?? INITIAL_CLIENT_PRICING_RESPONSE.spread.future,
+    future_mode: normalizeSpreadModeValue(pricing?.spread?.future_mode),
     option: pricing?.spread?.option ?? INITIAL_CLIENT_PRICING_RESPONSE.spread.option,
+    option_mode: normalizeSpreadModeValue(pricing?.spread?.option_mode),
     mcx: pricing?.spread?.mcx ?? INITIAL_CLIENT_PRICING_RESPONSE.spread.mcx,
+    mcx_mode: normalizeSpreadModeValue(pricing?.spread?.mcx_mode),
   },
 });
 
@@ -126,9 +136,13 @@ const sanitizePricingPayload = (payload = {}, base = INITIAL_CLIENT_PRICING_RESP
 
   const nextSpread = {
     cash: clamp(spreadCash ?? base.spread.cash, -1000, 1000),
+    cash_mode: normalizeSpreadModeValue(incomingSpread?.cash_mode ?? base.spread.cash_mode),
     future: clamp(spreadFuture ?? base.spread.future, -1000, 1000),
+    future_mode: normalizeSpreadModeValue(incomingSpread?.future_mode ?? base.spread.future_mode),
     option: clamp(spreadOption ?? base.spread.option, -1000, 1000),
+    option_mode: normalizeSpreadModeValue(incomingSpread?.option_mode ?? base.spread.option_mode),
     mcx: clamp(spreadMcx ?? base.spread.mcx, -1000, 1000),
+    mcx_mode: normalizeSpreadModeValue(incomingSpread?.mcx_mode ?? base.spread.mcx_mode),
   };
 
   return { brokerage: nextBrokerage, spread: nextSpread };
@@ -207,6 +221,7 @@ const getAllClients = asyncHandler(async (req, res) => {
     kycStatus: customer.kyc_status || 'pending',
     tradingEnabled: customer.trading_enabled || false,
     holdingsExitAllowed: customer.holdings_exit_allowed || false,
+    settlementEnabled: customer.settlement_enabled !== false,
     profilePhoto: customer.profile_photo || null,
     joiningDate: formatDate(customer.createdAt),
     lastLogin: customer.last_login,
@@ -279,6 +294,7 @@ const getClientById = asyncHandler(async (req, res) => {
       kycStatus: customer.kyc_status || 'pending',
       tradingEnabled: customer.trading_enabled || false,
       holdingsExitAllowed: customer.holdings_exit_allowed || false,
+      settlementEnabled: customer.settlement_enabled !== false,
       segmentsAllowed: customer.segments_allowed || [],
       profilePhoto: customer.profile_photo || null,
       settings: customer.settings,
@@ -291,6 +307,11 @@ const getClientById = asyncHandler(async (req, res) => {
         intradayLimit: fund.intraday?.available_limit || 0,
         intradayUsed: fund.intraday?.used_limit || 0,
         overnightLimit: fund.overnight?.available_limit || 0,
+        deliveryUsed: fund.delivery?.used_limit || fund.delivery?.used || 0,
+        commodityDeliveryLimit: fund.commodity_delivery?.available_limit || 0,
+        commodityDeliveryUsed: fund.commodity_delivery?.used_limit || 0,
+        commodityOptionLimitPercent: fund.commodity_option?.limit_percentage || 10,
+        commodityOptionUsed: fund.commodity_option?.used || 0,
       } : null,
       stats: {
         totalOrders,
@@ -347,8 +368,14 @@ const createClient = asyncHandler(async (req, res) => {
     customer_id_str: newCustomer.customer_id,
     broker_id_str: brokerIdStr,
     net_available_balance: 0,
-    intraday: { available_limit: 0, used_limit: 0 },
-    overnight: { available_limit: 0 },
+    available_balance: 0,
+    withdrawable_balance: 0,
+    intraday: { available_limit: 0, used_limit: 0, available: 0, used: 0 },
+    overnight: { available_limit: 0, used_limit: 0 },
+    delivery: { available: 0, used: 0, available_limit: 0, used_limit: 0 },
+    option_limit_percentage: 10,
+    commodity_delivery: { available_limit: 0, used_limit: 0 },
+    commodity_option: { limit_percentage: 10, used: 0 },
   });
 
   await ensureClientPricingConfig({
@@ -1103,8 +1130,14 @@ const restoreClient = asyncHandler(async (req, res) => {
     customer_id_str: restoredCustomer.customer_id,
     broker_id_str: brokerIdStr,
     net_available_balance: archivedFund.net_available_balance || 0,
-    intraday: archivedFund.intraday || { available_limit: 0, used_limit: 0 },
-    overnight: archivedFund.overnight || { available_limit: 0 },
+    available_balance: archivedFund.available_balance || archivedFund.net_available_balance || 0,
+    withdrawable_balance: archivedFund.withdrawable_balance || archivedFund.net_available_balance || 0,
+    intraday: archivedFund.intraday || { available_limit: 0, used_limit: 0, available: 0, used: 0 },
+    overnight: archivedFund.overnight || { available_limit: 0, used_limit: 0 },
+    delivery: archivedFund.delivery || { available: 0, used: 0, available_limit: 0, used_limit: 0 },
+    option_limit_percentage: archivedFund.option_limit_percentage || 10,
+    commodity_delivery: archivedFund.commodity_delivery || { available_limit: 0, used_limit: 0 },
+    commodity_option: archivedFund.commodity_option || { limit_percentage: 10, used: 0 },
   });
 
   await ensureClientPricingConfig({
@@ -1195,10 +1228,11 @@ const convertOrderToHold = asyncHandler(async (req, res) => {
     ? marginBlocked
     : (Number(order.effective_entry_price || order.price) * Number(order.quantity));
 
-  // Reserve delivery margin (fails if insufficient)
-  const reserveResult = reserveDeliveryForHoldConversion(fund, requiredDeliveryMargin, {
-    orderId: String(order._id),
-  });
+  // Reserve delivery margin (fails if insufficient) — MCX uses commodity_delivery bucket
+  const orderIsMcx = isMCX({ exchange: order.exchange, segment: order.segment });
+  const reserveResult = orderIsMcx
+    ? reserveCommodityDeliveryForHoldConversion(fund, requiredDeliveryMargin, { orderId: String(order._id) })
+    : reserveDeliveryForHoldConversion(fund, requiredDeliveryMargin, { orderId: String(order._id) });
 
   if (!reserveResult.ok) {
     return res.status(400).json({ success: false, message: reserveResult.error });
@@ -1320,6 +1354,197 @@ const extendOrderValidity = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * @desc     Enable or disable settlement participation for a client
+ * @route    PUT /api/broker/clients/:id/settlement
+ * @access   Private (Broker only)
+ */
+const setClientSettlement = asyncHandler(async (req, res) => {
+  const brokerId = req.user._id;
+  const brokerIdStr = req.user.login_id || req.user.stringBrokerId;
+  const { id } = req.params;
+  const { enabled, reason } = req.body || {};
+
+  if (typeof enabled !== 'boolean') {
+    return res.status(400).json({
+      success: false,
+      message: 'Field "enabled" (boolean) is required.',
+    });
+  }
+
+  const customer = await CustomerModel.findOne(
+    getCustomerOwnershipQuery(id, brokerId, brokerIdStr)
+  );
+
+  if (!customer) {
+    return res.status(404).json({ success: false, message: 'Client not found.' });
+  }
+
+  customer.settlement_enabled = enabled;
+  if (!enabled) {
+    customer.settlement_disabled_reason = reason || null;
+    customer.settlement_disabled_at = new Date();
+    customer.settlement_disabled_by = brokerId;
+  } else {
+    customer.settlement_disabled_reason = undefined;
+    customer.settlement_disabled_at = undefined;
+    customer.settlement_disabled_by = undefined;
+  }
+
+  await customer.save();
+
+  res.status(200).json({
+    success: true,
+    message: enabled ? 'Settlement enabled for client.' : 'Settlement disabled for client.',
+    settlementEnabled: customer.settlement_enabled,
+    reason: customer.settlement_disabled_reason || null,
+    updatedAt: new Date(),
+  });
+});
+
+/**
+ * @desc     Broker-only silent holdings quantity/lots correction
+ * @route    PUT /api/broker/clients/:id/orders/:orderId/holding-adjustment
+ * @access   Private (Broker only)
+ */
+const adjustHolding = asyncHandler(async (req, res) => {
+  const brokerId = req.user._id;
+  const brokerIdStr = req.user.login_id || req.user.stringBrokerId;
+  const { id: customerId, orderId } = req.params;
+  const { quantity, lots, reason, price } = req.body || {};
+
+  // Validate quantity and lots
+  const parsedQty = Math.floor(Number(quantity));
+  const parsedLots = Math.floor(Number(lots));
+
+  if (!Number.isFinite(parsedQty) || parsedQty <= 0) {
+    return res.status(400).json({ success: false, message: 'quantity must be a positive integer.' });
+  }
+  if (!Number.isFinite(parsedLots) || parsedLots <= 0) {
+    return res.status(400).json({ success: false, message: 'lots must be a positive integer.' });
+  }
+
+  // 1. Verify broker ownership
+  const customer = await CustomerModel.findOne(
+    getCustomerOwnershipQuery(customerId, brokerId, brokerIdStr)
+  ).select('_id customer_id broker_id_str').lean();
+
+  if (!customer) {
+    return res.status(404).json({ success: false, message: 'Client not found or access denied.' });
+  }
+
+  // 2. Find the order
+  let order = await OrderModel.findOne({ order_id: orderId });
+  if (!order) order = await OrderModel.findById(orderId);
+  if (!order) {
+    return res.status(404).json({ success: false, message: 'Order not found.' });
+  }
+
+  // 3. Verify order belongs to this customer
+  if (order.customer_id_str !== customer.customer_id) {
+    return res.status(403).json({ success: false, message: 'Order does not belong to this client.' });
+  }
+
+  // 4. Verify eligible: must be CNC/NRML, active, not aggregated
+  const product = String(order.product || '').toUpperCase();
+  if (product !== 'CNC' && product !== 'NRML') {
+    return res.status(400).json({ success: false, message: 'Holdings adjustment is only available for CNC/NRML orders.' });
+  }
+
+  const activeStatuses = ['OPEN', 'EXECUTED', 'HOLD', 'PENDING'];
+  const orderStatus = String(order.status || order.order_status || '').toUpperCase();
+  if (!activeStatuses.includes(orderStatus)) {
+    return res.status(400).json({ success: false, message: `Cannot adjust a ${orderStatus} order.` });
+  }
+
+  if (order.is_aggregated || order.isAggregated) {
+    return res.status(400).json({ success: false, message: 'Cannot adjust an aggregated holdings row.' });
+  }
+
+  // 5. Normalize qty/lots against lot_size (MCX uses units_per_contract)
+  const upc = Number(order.units_per_contract) || 0;
+  const lotSize = upc > 0 ? upc : Math.max(1, Math.round(Number(order.lot_size) || 1));
+  if (lotSize > 1 && parsedQty % lotSize !== 0) {
+    return res.status(400).json({ success: false, message: `Quantity must be divisible by ${upc > 0 ? 'units per contract' : 'lot size'} (${lotSize}).` });
+  }
+  const normalizedLots = Math.round(parsedQty / lotSize);
+  if (normalizedLots !== parsedLots) {
+    return res.status(400).json({ success: false, message: `Quantity (${parsedQty}) and lots (${parsedLots}) are inconsistent with ${upc > 0 ? 'units per contract' : 'lot size'} (${lotSize}).` });
+  }
+
+  // 6. Compute margin delta (silent — no fund.transactions entry)
+  const avgPrice = Number(order.effective_entry_price || order.price || 0);
+  const newMarginRequired = avgPrice * parsedQty;
+  const currentMarginBlocked = Number(order.margin_blocked) || 0;
+  const marginDelta = newMarginRequired - currentMarginBlocked;
+
+  if (marginDelta !== 0) {
+    const fund = await FundModel.findOne({
+      broker_id_str: order.broker_id_str || brokerIdStr,
+      customer_id_str: order.customer_id_str,
+    });
+
+    if (!fund) {
+      return res.status(400).json({ success: false, message: 'Fund record not found for this client.' });
+    }
+
+    const adjustBucket = getMarginBucket(order.product, { exchange: order.exchange, segment: order.segment });
+
+    if (marginDelta > 0) {
+      // Increase: reserve additional margin in the correct bucket
+      const result = reserveMargin(fund, adjustBucket, marginDelta);
+      if (!result.ok) {
+        return res.status(400).json({ success: false, message: result.error || 'Insufficient margin for this adjustment.' });
+      }
+    } else {
+      // Decrease: inline release — no customer-visible transaction entry
+      const release = Math.abs(marginDelta);
+      if (adjustBucket === 'commodity_delivery') {
+        fund.commodity_delivery.used_limit = Math.max(0, Number(fund.commodity_delivery?.used_limit || 0) - release);
+      } else {
+        fund.overnight.available_limit = Number(fund.overnight?.available_limit || 0) + release;
+        fund.delivery.used_limit = Math.max(0, Number(fund.delivery?.used_limit || 0) - release);
+      }
+      fund.last_calculated_at = new Date();
+    }
+
+    await fund.save();
+  }
+
+  // 7. Update order fields
+  order.quantity = parsedQty;
+  order.lots = String(normalizedLots);
+  order.margin_blocked = newMarginRequired;
+  order.modified_at = new Date();
+
+  // Optional: broker explicit avg price correction
+  if (price !== undefined && price !== null) {
+    const parsedPrice = Number(price);
+    if (Number.isFinite(parsedPrice) && parsedPrice > 0) {
+      order.price = parsedPrice;
+      order.effective_entry_price = parsedPrice;
+    }
+  }
+
+  await order.save();
+
+  console.log(`[Broker] Holdings adjustment: ${order.symbol} qty ${currentMarginBlocked > 0 ? (currentMarginBlocked / avgPrice).toFixed(0) : '?'} -> ${parsedQty} | margin delta ₹${marginDelta.toFixed(2)} | broker ${brokerIdStr}`);
+
+  return res.status(200).json({
+    success: true,
+    message: 'Holdings correction applied.',
+    order: {
+      id: order._id,
+      order_id: order.order_id,
+      symbol: order.symbol,
+      quantity: order.quantity,
+      lots: order.lots,
+      lot_size: order.lot_size,
+      margin_blocked: order.margin_blocked,
+    },
+  });
+});
+
 export {
   getAllClients,
   getClientById,
@@ -1342,4 +1567,6 @@ export {
   restoreClient,
   convertOrderToHold,
   extendOrderValidity,
+  setClientSettlement,
+  adjustHolding,
 };

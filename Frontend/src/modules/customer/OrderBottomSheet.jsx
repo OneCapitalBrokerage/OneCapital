@@ -1,16 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import customerApi from '../../api/customer';
+import { isMcxSegment, getMcxSpec } from '../../utils/mcxSpecs';
+import useCustomerTradingGate from '../../hooks/useCustomerTradingGate';
 
-const MARKET_CLOSED_TEXT = 'Market Closed. Open From 9:15AM To 3:15PM On Working Days';
 const LIVE_TICK_MAX_AGE_MS = 3 * 1000;
 
-const computeValidity = (productType, expiry) => {
+const computeValidity = (productType, expiry, { exchange, segment } = {}) => {
   const now = new Date();
+  const isMcx = isMcxSegment(exchange, segment);
+  const closeH = isMcx ? 23 : 15;
+  const closeM = isMcx ? 0 : 15;
 
   if (productType === 'MIS') {
     const endOfDay = new Date(now);
-    endOfDay.setHours(15, 15, 0, 0);
+    endOfDay.setHours(closeH, closeM, 0, 0);
     return { type: 'DAY', expiresAt: endOfDay.toISOString() };
   }
 
@@ -18,7 +22,7 @@ const computeValidity = (productType, expiry) => {
   if (expiry) {
     const expiryDate = new Date(expiry);
     if (!Number.isNaN(expiryDate.getTime())) {
-      expiryDate.setHours(15, 15, 0, 0);
+      expiryDate.setHours(closeH, closeM, 0, 0);
       return { type: 'EXPIRY', expiresAt: expiryDate.toISOString() };
     }
   }
@@ -26,7 +30,7 @@ const computeValidity = (productType, expiry) => {
   // Equity longterm: 7 calendar days from now, at market close
   const equity7d = new Date(now);
   equity7d.setDate(equity7d.getDate() + 7);
-  equity7d.setHours(15, 15, 0, 0);
+  equity7d.setHours(closeH, closeM, 0, 0);
   return { type: 'EQUITY_7D', expiresAt: equity7d.toISOString() };
 };
 
@@ -71,8 +75,15 @@ const OrderBottomSheet = ({
 
   const navigate = useNavigate();
   const instrumentToken = stock?.instrumentToken || stock?.instrument_token || null;
-  const lotSize = stock?.lot_size || stock?.lotSize || resolvedLotSize || 1;
+  const isMcx = isMcxSegment(stock?.exchange, stock?.segment);
+  const mcxSpec = useMemo(() => isMcx ? getMcxSpec(stock?.name || stock?.symbol) : null, [isMcx, stock?.name, stock?.symbol]);
+  const lotSize = mcxSpec ? mcxSpec.units_per_contract : (stock?.lot_size || stock?.lotSize || resolvedLotSize || 1);
   const instrumentExpiry = stock?.expiry || resolvedExpiry || null;
+  const { isTradingAllowed, getClosedMessage } = useCustomerTradingGate();
+  const tradingBlocked = !isTradingAllowed({ exchange: stock?.exchange, segment: stock?.segment });
+  const effectiveDisableTrading = disableTrading || tradingBlocked;
+  const effectiveDisableReason = disableReason || getClosedMessage({ exchange: stock?.exchange, segment: stock?.segment });
+
   const safeSide = side || 'BUY';
   const isBuy = safeSide === 'BUY';
   const isLongTerm = productType === 'CNC';
@@ -167,6 +178,10 @@ const OrderBottomSheet = ({
 
   const availableBalance = useMemo(() => {
     if (!funds) return 0;
+    // MCX options use commodity option premium
+    if (isOption && isMcx) {
+      return funds?.trading?.commodityOptionPremium?.remaining ?? 0;
+    }
     // Options use ONLY the option premium balance
     if (isOption) {
       return funds?.trading?.optionPremium?.remaining ?? 0;
@@ -174,8 +189,12 @@ const OrderBottomSheet = ({
     if (productType === 'MIS') {
       return funds?.balance?.intraday?.free ?? 0;
     }
+    // MCX CNC uses commodity delivery bucket
+    if (isMcx) {
+      return funds?.trading?.commodityDelivery?.remaining ?? 0;
+    }
     return funds?.balance?.overnight?.available ?? 0;
-  }, [funds, productType, isOption]);
+  }, [funds, productType, isOption, isMcx]);
 
   // Reset form state when sheet opens with a new stock/side
   useEffect(() => {
@@ -238,10 +257,10 @@ const OrderBottomSheet = ({
   if (!isOpen || !stock) return null;
 
   const handlePlaceOrder = async () => {
-    if (disableTrading) {
+    if (effectiveDisableTrading) {
       setFeedback({
         type: 'error',
-        message: disableReason || MARKET_CLOSED_TEXT,
+        message: effectiveDisableReason || 'Market is closed.',
       });
       return;
     }
@@ -302,7 +321,7 @@ const OrderBottomSheet = ({
       return;
     }
 
-    const validity = computeValidity(productType, instrumentExpiry);
+    const validity = computeValidity(productType, instrumentExpiry, { exchange: stock?.exchange, segment: stock?.segment });
 
     const orderTypePayload = orderType === 'TGT' ? 'LIMIT' : orderType;
 
@@ -482,8 +501,11 @@ const OrderBottomSheet = ({
                   onChange={(event) => setQty(event.target.value)}
                 />
               </div>
-              {lotSize > 1 && qty !== '' && safeLots > 0 && (
-                <p className="text-[10px] text-gray-400 text-center">{totalQty} qty ({safeLots} × {lotSize})</p>
+              {qty !== '' && safeLots > 0 && (mcxSpec || lotSize > 1) && (
+                <p className="text-[10px] text-gray-400 text-center">
+                  {totalQty} {mcxSpec ? 'units' : 'qty'} ({safeLots} × {lotSize})
+                  {mcxSpec ? ` · ${mcxSpec.contract_size}` : ''}
+                </p>
               )}
             </div>
             <div className="space-y-1">
@@ -539,9 +561,9 @@ const OrderBottomSheet = ({
               </span>
               <span className="text-xs font-semibold text-gray-900 dark:text-[#e8f3ee]">
                 {(() => {
-                  const v = computeValidity(productType, instrumentExpiry);
+                  const v = computeValidity(productType, instrumentExpiry, { exchange: stock?.exchange, segment: stock?.segment });
                   const d = new Date(v.expiresAt);
-                  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + ', 3:15 PM';
+                  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + (isMcx ? ', 11:00 PM' : ', 3:15 PM');
                 })()}
               </span>
             </div>
@@ -553,9 +575,9 @@ const OrderBottomSheet = ({
             </div>
           )}
 
-          {disableTrading && (
+          {effectiveDisableTrading && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-medium text-amber-700">
-              {disableReason || MARKET_CLOSED_TEXT}
+              {effectiveDisableReason}
             </div>
           )}
 
@@ -569,7 +591,7 @@ const OrderBottomSheet = ({
               </span>
             </div>
             <div className="flex gap-3">
-              {!disableTrading && (
+              {!effectiveDisableTrading && (
                 <button
                   type="button"
                   onClick={handlePlaceOrder}
@@ -582,7 +604,7 @@ const OrderBottomSheet = ({
               <button
                 type="button"
                 onClick={onClose}
-                className={`${disableTrading ? 'flex-1' : ''} px-5 py-3.5 text-gray-500 font-bold hover:bg-gray-100 dark:hover:bg-[#16231d] rounded-lg transition-colors`}
+                className={`${effectiveDisableTrading ? 'flex-1' : ''} px-5 py-3.5 text-gray-500 font-bold hover:bg-gray-100 dark:hover:bg-[#16231d] rounded-lg transition-colors`}
               >
                 CANCEL
               </button>

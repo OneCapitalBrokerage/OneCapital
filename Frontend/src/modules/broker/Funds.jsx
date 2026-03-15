@@ -45,6 +45,16 @@ const mapBalance = (response) => {
     funds.optionChainLimitPercent ?? balance.optionChain?.percentage ?? DEFAULT_OPTION_CHAIN_PERCENT
   );
 
+  const commodityDeliveryAvailable = clampNonNegative(
+    funds.commodityDeliveryAvailable ?? balance.commodityDelivery?.available ?? data.commodityDeliveryAvailable
+  );
+  const commodityDeliveryUsed = clampNonNegative(
+    funds.commodityDeliveryUsed ?? balance.commodityDelivery?.used ?? data.commodityDeliveryUsed
+  );
+  const commodityOptionLimitPercent = clampNonNegative(
+    funds.commodityOptionLimitPercent ?? balance.commodityOption?.percentage ?? DEFAULT_OPTION_CHAIN_PERCENT
+  );
+
   return {
     depositedCash,
     pnlBalance,
@@ -54,6 +64,9 @@ const mapBalance = (response) => {
     longTermAvailable,
     optionChainLimit,
     optionChainLimitPercent,
+    commodityDeliveryAvailable,
+    commodityDeliveryUsed,
+    commodityOptionLimitPercent,
   };
 };
 
@@ -72,6 +85,8 @@ const Funds = () => {
     intradayAvailable: '',
     longTermAvailable: '',
     optionLimitPercentage: '',
+    commodityDeliveryAvailable: '',
+    commodityOptionLimitPercentage: '',
   });
   const [baseline, setBaseline] = useState(null);
 
@@ -100,6 +115,8 @@ const Funds = () => {
         intradayAvailable: String(snapshot.intradayAvailable),
         longTermAvailable: String(snapshot.longTermAvailable),
         optionLimitPercentage: String(snapshot.optionChainLimitPercent),
+        commodityDeliveryAvailable: String(snapshot.commodityDeliveryAvailable),
+        commodityOptionLimitPercentage: String(snapshot.commodityOptionLimitPercent),
       });
       setNote('');
     } catch (err) {
@@ -110,6 +127,8 @@ const Funds = () => {
         intradayAvailable: '',
         longTermAvailable: '',
         optionLimitPercentage: '',
+        commodityDeliveryAvailable: '',
+        commodityOptionLimitPercentage: '',
       });
     } finally {
       setLoadingBalance(false);
@@ -140,13 +159,21 @@ const Funds = () => {
     return Number(((computedOpeningBalance * optionPercent) / 100).toFixed(2));
   }, [computedOpeningBalance, form.optionLimitPercentage]);
 
+  const commodityOptionPreview = useMemo(() => {
+    const pct = clampNonNegative(form.commodityOptionLimitPercentage);
+    const commodityBase = clampNonNegative(form.commodityDeliveryAvailable);
+    return Number(((commodityBase * pct) / 100).toFixed(2));
+  }, [form.commodityDeliveryAvailable, form.commodityOptionLimitPercentage]);
+
   const hasChanges = useMemo(() => {
     if (!baseline) return false;
     return (
       clampNonNegative(form.depositedCash) !== baseline.depositedCash ||
       clampNonNegative(form.intradayAvailable) !== baseline.intradayAvailable ||
       clampNonNegative(form.longTermAvailable) !== baseline.longTermAvailable ||
-      clampNonNegative(form.optionLimitPercentage) !== baseline.optionChainLimitPercent
+      clampNonNegative(form.optionLimitPercentage) !== baseline.optionChainLimitPercent ||
+      clampNonNegative(form.commodityDeliveryAvailable) !== baseline.commodityDeliveryAvailable ||
+      clampNonNegative(form.commodityOptionLimitPercentage) !== baseline.commodityOptionLimitPercent
     );
   }, [form, baseline]);
 
@@ -168,6 +195,8 @@ const Funds = () => {
       intradayAvailable: String(baseline.intradayAvailable),
       longTermAvailable: String(baseline.longTermAvailable),
       optionLimitPercentage: String(baseline.optionChainLimitPercent),
+      commodityDeliveryAvailable: String(baseline.commodityDeliveryAvailable),
+      commodityOptionLimitPercentage: String(baseline.commodityOptionLimitPercent),
     });
     setNote('');
     setError(null);
@@ -185,6 +214,8 @@ const Funds = () => {
       intradayAvailable: clampNonNegative(form.intradayAvailable),
       longTermAvailable: clampNonNegative(form.longTermAvailable),
       optionLimitPercentage: clampNonNegative(form.optionLimitPercentage),
+      commodityDeliveryAvailable: clampNonNegative(form.commodityDeliveryAvailable),
+      commodityOptionLimitPercentage: clampNonNegative(form.commodityOptionLimitPercentage),
       note: note.trim(),
     };
 
@@ -200,6 +231,8 @@ const Funds = () => {
         intradayAvailable: String(nextSnapshot.intradayAvailable),
         longTermAvailable: String(nextSnapshot.longTermAvailable),
         optionLimitPercentage: String(nextSnapshot.optionChainLimitPercent),
+        commodityDeliveryAvailable: String(nextSnapshot.commodityDeliveryAvailable),
+        commodityOptionLimitPercentage: String(nextSnapshot.commodityOptionLimitPercent),
       });
       setNote('');
       setSuccess(`Funds updated for ${selectedClient.name || selectedClient.id}.`);
@@ -327,7 +360,7 @@ const Funds = () => {
                   <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-3">
                     <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Opening Balance (Auto)</p>
                     <p className="text-lg font-bold text-[#111418]">{formatCurrency(computedOpeningBalance)}</p>
-                    <p className="text-[10px] text-[#617589]">Intraday + Delivery limits</p>
+                    <p className="text-[10px] text-[#617589]">Intraday + delivery margin</p>
                   </div>
 
                   <label className="rounded-xl border border-gray-200 p-3">
@@ -342,7 +375,7 @@ const Funds = () => {
                   </label>
 
                   <label className="rounded-xl border border-gray-200 p-3">
-                    <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Long-Term Cash</p>
+                    <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Delivery Margin</p>
                     <input
                       type="number"
                       min="0"
@@ -353,7 +386,7 @@ const Funds = () => {
                   </label>
 
                   <label className="rounded-xl border border-gray-200 p-3">
-                    <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Option Limit %</p>
+                    <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Option Premium (%)</p>
                     <input
                       type="number"
                       min="0"
@@ -371,6 +404,43 @@ const Funds = () => {
                     </p>
                     <p className="text-[10px] text-[#617589]">
                       {clampNonNegative(form.optionLimitPercentage)}% of opening balance. Deducted from respective margin bucket.
+                    </p>
+                  </div>
+
+                  <div className="col-span-1 mt-1 rounded-xl border border-amber-200 bg-amber-50/50 p-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-700">Commodities (MCX)</p>
+                  </div>
+
+                  <label className="rounded-xl border border-gray-200 p-3">
+                    <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Commodities Delivery Margin</p>
+                    <input
+                      type="number"
+                      min="0"
+                      value={form.commodityDeliveryAvailable}
+                      onChange={(e) => handleFieldChange('commodityDeliveryAvailable', e.target.value)}
+                      className="w-full bg-transparent text-lg font-bold text-[#111418] outline-none"
+                    />
+                  </label>
+
+                  <label className="rounded-xl border border-gray-200 p-3">
+                    <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Commodities Option Premium (%)</p>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={form.commodityOptionLimitPercentage}
+                      onChange={(e) => handleFieldChange('commodityOptionLimitPercentage', e.target.value)}
+                      className="w-full bg-transparent text-lg font-bold text-[#111418] outline-none"
+                    />
+                  </label>
+
+                  <div className="rounded-xl border border-dashed border-amber-400/40 bg-amber-50/50 p-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Commodities Option Premium Limit (Auto)</p>
+                    <p className="mt-1 text-lg font-bold text-amber-600">
+                      {formatCurrency(commodityOptionPreview)}
+                    </p>
+                    <p className="text-[10px] text-[#617589]">
+                      {clampNonNegative(form.commodityOptionLimitPercentage)}% of commodities delivery margin.
                     </p>
                   </div>
                 </div>
@@ -396,6 +466,12 @@ const Funds = () => {
                   </p>
                   <p className="text-xs text-[#617589]">
                     Existing Option %: <span className="font-semibold text-[#111418]">{clampNonNegative(baseline?.optionChainLimitPercent || 0)}%</span>
+                  </p>
+                  <p className="text-xs text-[#617589]">
+                    Commodities Delivery Used: <span className="font-semibold text-[#111418]">{formatCurrency(baseline?.commodityDeliveryUsed || 0)}</span>
+                  </p>
+                  <p className="text-xs text-[#617589]">
+                    Commodities Option %: <span className="font-semibold text-[#111418]">{clampNonNegative(baseline?.commodityOptionLimitPercent || 0)}%</span>
                   </p>
                 </div>
 

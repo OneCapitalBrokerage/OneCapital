@@ -23,6 +23,7 @@ const OrderSchema = new mongoose.Schema({
   quantity: { type: Number, required: true, min: 1 },
   lots: { type: Number, default: 1 },
   lot_size: { type: Number, default: 1 },
+  units_per_contract: { type: Number, default: 0 }, // MCX overlay: >0 = MCX order
 
   // Prices
   price: { type: Number, default: 0 }, // Limit/avg entry price

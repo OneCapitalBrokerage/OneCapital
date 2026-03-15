@@ -50,20 +50,6 @@ const getIstDateKey = (value) => {
   return `${year}-${month}-${day}`;
 };
 
-const isSettlementWeekendOpen = (date = new Date()) => {
-  const day = getIstClockDate(date).getUTCDay();
-  return day === 6 || day === 0;
-};
-
-const getNextSundayIst = (date = new Date()) => {
-  const istClock = getIstClockDate(date);
-  const day = istClock.getUTCDay();
-  const daysUntilSunday = day === 0 ? 7 : 7 - day;
-  const nextSunday = new Date(istClock);
-  nextSunday.setUTCDate(nextSunday.getUTCDate() + daysUntilSunday);
-  nextSunday.setUTCHours(0, 0, 0, 0);
-  return new Date(nextSunday.getTime() - IST_OFFSET_MS);
-};
 
 const ClientDetail = () => {
   const navigate = useNavigate();
@@ -79,9 +65,6 @@ const ClientDetail = () => {
   const [actionConfirm, setActionConfirm] = useState(null);
   const [actionConfirmSubmitting, setActionConfirmSubmitting] = useState(false);
   const [actionConfirmError, setActionConfirmError] = useState(null);
-  const [settlementWarning, setSettlementWarning] = useState(false);
-  const [settlementRunning, setSettlementRunning] = useState(false);
-  const [settlementResult, setSettlementResult] = useState(null);
 
   const [client, setClient] = useState(null);
   const [ledger, setLedger] = useState(null);
@@ -188,6 +171,11 @@ const ClientDetail = () => {
           came_From: order.came_From,
           jobbin_price: order.jobbin_price,
           exit_allowed: order.exit_allowed ?? false,
+          validity_mode: order.validity_mode || null,
+          validity_expires_at: order.validity_expires_at || null,
+          validity_extended_count: order.validity_extended_count || 0,
+          can_extend_validity: order.can_extend_validity ?? false,
+          extend_validity_reason: order.extend_validity_reason || null,
           placedAt: order.placedAt || order.placed_at || order.createdAt,
         }));
 
@@ -483,6 +471,12 @@ const ClientDetail = () => {
     setActionConfirmError(null);
   };
 
+  // Holdings correction handler (broker-only, silent)
+  const handleAdjustHolding = async (order, payload) => {
+    await brokerApi.adjustHolding(clientId, order.id, payload);
+    await fetchOrders();
+  };
+
   // Broker control handlers
   const handleBlock = async () => {
     setActionLoading(true);
@@ -592,49 +586,17 @@ const ClientDetail = () => {
     }
   };
 
-  const settlementWindowOpen = isSettlementWeekendOpen();
-
-  const nextSundayLabel = getNextSundayIst().toLocaleDateString('en-IN', {
-    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata',
-  });
-
-  const handleSettleClient = () => {
-    if (!settlementWindowOpen) {
-      setSettlementResult({
-        tone: 'error',
-        message: 'Manual settlement is available only on Saturday and Sunday (IST).',
-      });
-      return;
-    }
-    setSettlementResult(null);
-    setSettlementWarning(true);
-  };
-
-  const doRunClientSettlement = async () => {
-    if (!settlementWindowOpen) {
-      setSettlementResult({
-        tone: 'error',
-        message: 'Manual settlement is available only on Saturday and Sunday (IST).',
-      });
-      return;
-    }
-    setSettlementRunning(true);
-    setSettlementResult(null);
+  const handleToggleSettlement = async () => {
+    if (!client) return;
+    const newEnabled = !client.settlementEnabled;
+    setActionLoading(true);
     try {
-      const res = await brokerApi.runCustomerSettlement(clientId, {});
-      const created = Number(res?.settlement?.created || 0);
-      setSettlementResult({
-        tone: created > 0 ? 'success' : 'info',
-        message: res?.message || 'Settlement completed.',
-      });
-      if (created > 0) {
-        await Promise.all([fetchClientDetails(), fetchOrders()]);
-      }
+      await brokerApi.setClientSettlement(clientId, newEnabled);
+      setClient((prev) => ({ ...prev, settlementEnabled: newEnabled }));
     } catch (err) {
-      const msg = err?.response?.data?.message || err?.message || 'Settlement failed.';
-      setSettlementResult({ tone: 'error', message: msg });
+      console.error('Failed to toggle settlement:', err);
     } finally {
-      setSettlementRunning(false);
+      setActionLoading(false);
     }
   };
 
@@ -936,6 +898,11 @@ const ClientDetail = () => {
                     Admin Suspended
                   </span>
                 )}
+                {!client.settlementEnabled && (
+                  <span className="px-2 py-0.5 rounded text-[10px] sm:text-xs font-bold uppercase bg-amber-100 text-amber-700">
+                    Settlement Off
+                  </span>
+                )}
                 <span>ID: {client.id || clientId}</span>
               </div>
             </div>
@@ -1082,6 +1049,43 @@ const ClientDetail = () => {
                 </div>
               </div>
 
+              {/* Settlement Toggle */}
+              <div className={`flex items-center justify-between bg-gray-50 p-3 rounded-xl ${client.status === 'blocked' || client.blockedByAdmin ? 'opacity-50 pointer-events-none' : ''}`}>
+                <div className="flex items-center gap-2 sm:gap-3">
+                  <div className={`p-2 rounded-full shadow-sm bg-white ${client.settlementEnabled ? 'text-emerald-600' : 'text-amber-500'}`}>
+                    <span className="material-symbols-outlined text-[18px] sm:text-[20px]">
+                      {client.settlementEnabled ? 'event_available' : 'event_busy'}
+                    </span>
+                  </div>
+                  <div>
+                    <p className="text-xs sm:text-sm font-bold">Settlement</p>
+                    <p className="text-[10px] sm:text-xs text-[#617589]">
+                      {client.settlementEnabled ? 'Included in weekly settlement' : 'Excluded from settlement; P&L carries forward'}
+                    </p>
+                  </div>
+                </div>
+                <div className="relative inline-block w-10 sm:w-11 h-5 sm:h-6 align-middle select-none">
+                  <input
+                    type="checkbox"
+                    id="settlementToggle"
+                    checked={!!client.settlementEnabled}
+                    onChange={handleToggleSettlement}
+                    disabled={actionLoading || client.status === 'blocked' || client.blockedByAdmin}
+                    className="sr-only peer"
+                  />
+                  <label
+                    htmlFor="settlementToggle"
+                    className={`block overflow-hidden h-5 sm:h-6 rounded-full cursor-pointer transition-colors duration-200 ${
+                      client.settlementEnabled ? 'bg-emerald-500' : 'bg-gray-300'
+                    }`}
+                  >
+                    <span className={`block w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-white shadow-sm transform transition-transform duration-200 mt-0.5 ${
+                      client.settlementEnabled ? 'translate-x-5' : 'translate-x-0.5'
+                    }`}></span>
+                  </label>
+                </div>
+              </div>
+
               {/* Delete Account */}
               <button
                 onClick={() => setDeleteConfirm(true)}
@@ -1195,54 +1199,6 @@ const ClientDetail = () => {
               </div>
             </section>
 
-            {/* Weekly Settlement */}
-            <section className="px-3 sm:px-4 py-2">
-              <div className="bg-white rounded-xl overflow-hidden shadow-sm border border-gray-100">
-                <div className="px-3 sm:px-4 py-2.5 border-b border-gray-100 flex items-center justify-between">
-                  <h3 className="text-sm sm:text-base font-bold">Weekly Settlement</h3>
-                  <span className="text-[10px] font-semibold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100">Resets P&L</span>
-                </div>
-                <div className="px-3 sm:px-4 py-3 space-y-2">
-                  <p className="text-[11px] text-[#617589] leading-relaxed">
-                    Crystallises this client&apos;s weekly realized P&amp;L. Net cash and this week&apos;s portfolio P&amp;L counters reset for the next session, while open holdings and open-order unrealized P&amp;L stay live.
-                  </p>
-                  {settlementResult && (
-                    <div className={`flex items-start gap-2 rounded-lg px-3 py-2 text-xs font-medium ${
-                      settlementResult.tone === 'success'
-                        ? 'bg-green-50 text-green-700 border border-green-100'
-                        : settlementResult.tone === 'info'
-                          ? 'bg-blue-50 text-blue-700 border border-blue-100'
-                          : 'bg-red-50 text-red-700 border border-red-100'
-                    }`}>
-                      <span className="material-symbols-outlined text-[14px] mt-0.5 shrink-0">
-                        {settlementResult.tone === 'success'
-                          ? 'check_circle'
-                          : settlementResult.tone === 'info'
-                            ? 'info'
-                            : 'error'}
-                      </span>
-                      {settlementResult.message}
-                    </div>
-                  )}
-                  {!settlementWindowOpen && (
-                    <p className="text-[11px] text-amber-700">
-                      Manual settlement is available only on Saturday and Sunday (IST).
-                    </p>
-                  )}
-                  <button
-                    onClick={handleSettleClient}
-                    disabled={settlementRunning || !settlementWindowOpen}
-                    className="w-full h-10 bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-white text-sm font-bold rounded-xl flex items-center justify-center gap-2 transition-colors"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">
-                      {settlementRunning ? 'hourglass_top' : 'account_balance'}
-                    </span>
-                    {settlementRunning ? 'Running Settlement...' : 'Settle This Client'}
-                  </button>
-                </div>
-              </div>
-            </section>
-
             {/* Funds Info */}
             {client.funds && (
               <section className="px-3 sm:px-4 py-2">
@@ -1255,7 +1211,10 @@ const ClientDetail = () => {
                       { label: 'Balance', value: formatCurrency(client.funds.balance) },
                       { label: 'Intraday Limit', value: formatCurrency(client.funds.intradayLimit) },
                       { label: 'Intraday Used', value: formatCurrency(client.funds.intradayUsed) },
-                      { label: 'Delivery Limit', value: formatCurrency(client.funds.overnightLimit || client.funds.deliveryLimit) },
+                      { label: 'Delivery Margin', value: formatCurrency(client.funds.overnightLimit || client.funds.deliveryLimit) },
+                      { label: 'Commodities Delivery Margin', value: formatCurrency(client.funds.commodityDeliveryLimit) },
+                      { label: 'Commodities Delivery Used', value: formatCurrency(client.funds.commodityDeliveryUsed) },
+                      { label: 'Commodities Option Premium', value: `${Number(client.funds.commodityOptionLimitPercent || 10).toFixed(2)}%` },
                     ].map(item => (
                       <div key={item.label} className="px-3 sm:px-4 py-2.5 sm:py-3 flex items-center justify-between">
                         <p className="text-xs sm:text-sm text-[#617589]">{item.label}</p>
@@ -1458,6 +1417,7 @@ const ClientDetail = () => {
         apiGetBalance={brokerGetBalance}
         onConvertToHold={handleConvertToHold}
         onExtendValidity={handleExtendValidity}
+        onAdjustHolding={handleAdjustHolding}
         brokerMode
       />
 
@@ -1519,85 +1479,6 @@ const ClientDetail = () => {
                 className="flex-1 h-11 bg-red-500 text-white rounded-xl font-bold text-sm"
               >
                 {actionLoading ? 'Deleting...' : 'Delete'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Settlement Warning Modal */}
-      {settlementWarning && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-white w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl shadow-xl overflow-hidden">
-            {/* Header */}
-            <div className="bg-amber-50 border-b border-amber-100 px-5 pt-5 pb-4">
-              <div className="flex items-start gap-3">
-                <div className="size-11 rounded-full bg-amber-100 flex items-center justify-center shrink-0 mt-0.5">
-                  <span className="material-symbols-outlined text-amber-600 text-[22px]">warning</span>
-                </div>
-                <div>
-                  <p className="text-[#111418] font-bold text-base leading-snug">
-                    Settle {client?.name}&apos;s Account?
-                  </p>
-                  <p className="text-amber-700 text-xs font-medium mt-0.5">Review carefully before proceeding</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Warning Body */}
-            <div className="px-5 py-4 space-y-3">
-              <div className="rounded-xl bg-red-50 border border-red-100 px-4 py-3">
-                <p className="text-red-700 text-xs font-bold uppercase tracking-wider mb-2">This will reset for this client:</p>
-                <ul className="space-y-1.5">
-                  {[
-                    'Net Cash P&L balance → resets to ₹0',
-                    'This week portfolio realized P&L counter → restarts from now',
-                    'Weekly session boundary → new session starts from this timestamp',
-                  ].map((item) => (
-                    <li key={item} className="flex items-start gap-2 text-xs text-red-700">
-                      <span className="material-symbols-outlined text-red-500 text-[13px] mt-0.5 shrink-0">cancel</span>
-                      {item}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              <div className="rounded-xl bg-blue-50 border border-blue-100 px-4 py-3">
-                <p className="text-[#137fec] text-xs font-bold uppercase tracking-wider mb-1.5">Next Auto-Run for All Clients</p>
-                <p className="text-[#111418] text-sm font-bold">{nextSundayLabel}</p>
-                <p className="text-[#617589] text-xs mt-0.5">at 12:00 AM IST (Sunday)</p>
-              </div>
-
-              <div className="rounded-xl bg-amber-50 border border-amber-100 px-4 py-3 space-y-1.5">
-                {[
-                  `Confirm you have contacted ${client?.name} before settling.`,
-                  'Ensure outstanding losses are recovered or profits transferred.',
-                  'Open holdings and open-order unrealized P&L stay live after this reset.',
-                ].map((item) => (
-                  <div key={item} className="flex items-start gap-2 text-xs text-amber-800">
-                    <span className="material-symbols-outlined text-amber-500 text-[13px] mt-0.5 shrink-0">info</span>
-                    {item}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div className="px-5 pb-6 pt-1 flex gap-3">
-              <button
-                onClick={() => setSettlementWarning(false)}
-                className="flex-1 h-11 bg-gray-100 text-[#111418] rounded-xl font-bold text-sm"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  setSettlementWarning(false);
-                  doRunClientSettlement();
-                }}
-                className="flex-1 h-11 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold text-sm"
-              >
-                Proceed Anyway
               </button>
             </div>
           </div>

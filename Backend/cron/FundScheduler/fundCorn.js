@@ -4,6 +4,7 @@ import Order from '../../Model/Trading/OrdersModel.js';
 import { writeAuditSuccess } from '../../Utils/AuditLogger.js';
 import { withLock } from '../../services/cronLock.js';
 import { runAutoWeeklySettlementForAllBrokers } from '../../services/weeklySettlementService.js';
+import { isMCX } from '../../Utils/mcx/resolver.js';
 
 const toNumber = (v) => {
   const n = Number(v);
@@ -37,22 +38,45 @@ async function reconcileFundMargin(fund) {
     activeMisOrders.reduce((sum, o) => sum + toNumber(o.margin_blocked), 0)
   );
 
+  // Non-MCX equity delivery orders → reconcile delivery.used_limit
   const activeDeliveryOrders = await Order.find({
     customer_id_str,
     broker_id_str,
     product: { $in: DELIVERY_PRODUCTS },
     status: { $in: ACTIVE_STATUSES },
+    $nor: [
+      { exchange: { $regex: /MCX/i } },
+      { segment: { $regex: /MCX/i } },
+    ],
   }).select('margin_blocked symbol').lean();
 
   const expectedDeliveryUsed = round2(
     activeDeliveryOrders.reduce((sum, o) => sum + toNumber(o.margin_blocked), 0)
   );
 
+  // MCX delivery orders → reconcile commodity_delivery.used_limit
+  const activeMcxDeliveryOrders = await Order.find({
+    customer_id_str,
+    broker_id_str,
+    product: { $in: DELIVERY_PRODUCTS },
+    status: { $in: ACTIVE_STATUSES },
+    $or: [
+      { exchange: { $regex: /MCX/i } },
+      { segment: { $regex: /MCX/i } },
+    ],
+  }).select('margin_blocked symbol exchange segment').lean();
+
+  const expectedCommodityDeliveryUsed = round2(
+    activeMcxDeliveryOrders.reduce((sum, o) => toNumber(o.margin_blocked) > 0 ? sum + toNumber(o.margin_blocked) : sum, 0)
+  );
+
   const currentIntradayUsed = round2(toNumber(fund.intraday?.used_limit));
   const currentDeliveryUsed = round2(toNumber(fund.delivery?.used_limit));
+  const currentCommodityDeliveryUsed = round2(toNumber(fund.commodity_delivery?.used_limit));
 
   let intradayFixed = false;
   let deliveryFixed = false;
+  let commodityFixed = false;
 
   if (currentIntradayUsed !== expectedIntradayUsed) {
     const drift = round2(currentIntradayUsed - expectedIntradayUsed);
@@ -84,18 +108,37 @@ async function reconcileFundMargin(fund) {
     fund.transactions.push({
       type: 'margin_reconcile_delivery',
       amount: round2(Math.abs(drift)),
-      notes: `Midnight reconcile: delivery corrected from Rs${currentDeliveryUsed} to Rs${expectedDeliveryUsed} (drift Rs${drift}) | ${activeDeliveryOrders.length} active delivery orders`,
+      notes: `Midnight reconcile: delivery corrected from Rs${currentDeliveryUsed} to Rs${expectedDeliveryUsed} (drift Rs${drift}) | ${activeDeliveryOrders.length} active equity delivery orders`,
       status: 'completed',
       timestamp: new Date(),
     });
     deliveryFixed = true;
   }
 
-  if (intradayFixed || deliveryFixed) {
+  if (currentCommodityDeliveryUsed !== expectedCommodityDeliveryUsed) {
+    const drift = round2(currentCommodityDeliveryUsed - expectedCommodityDeliveryUsed);
+    console.log(
+      `[CRON] Reconcile commodity_delivery ${customer_id_str}: was Rs${currentCommodityDeliveryUsed}, expected Rs${expectedCommodityDeliveryUsed} (drift Rs${drift})`
+    );
+
+    if (!fund.commodity_delivery) fund.commodity_delivery = { available_limit: 0, used_limit: 0 };
+    fund.commodity_delivery.used_limit = expectedCommodityDeliveryUsed;
+
+    fund.transactions.push({
+      type: 'margin_reconcile_commodity',
+      amount: round2(Math.abs(drift)),
+      notes: `Midnight reconcile: commodity delivery corrected from Rs${currentCommodityDeliveryUsed} to Rs${expectedCommodityDeliveryUsed} (drift Rs${drift}) | ${activeMcxDeliveryOrders.length} active MCX delivery orders`,
+      status: 'completed',
+      timestamp: new Date(),
+    });
+    commodityFixed = true;
+  }
+
+  if (intradayFixed || deliveryFixed || commodityFixed) {
     fund.last_calculated_at = new Date();
   }
 
-  return { intradayFixed, deliveryFixed };
+  return { intradayFixed, deliveryFixed, commodityFixed };
 }
 
 const FundCronJobs = () => {
@@ -148,21 +191,23 @@ const FundCronJobs = () => {
 
         try {
           const allFunds = await Fund.find({}).select(
-            '_id customer_id_str broker_id_str intraday delivery overnight transactions last_calculated_at option_premium_used option_limit'
+            '_id customer_id_str broker_id_str intraday delivery overnight commodity_delivery transactions last_calculated_at option_premium_used option_limit'
           );
 
           let intradayFixedCount = 0;
           let deliveryFixedCount = 0;
+          let commodityFixedCount = 0;
           let cleanCount = 0;
 
           for (const fund of allFunds) {
             try {
-              const { intradayFixed, deliveryFixed } = await reconcileFundMargin(fund);
+              const { intradayFixed, deliveryFixed, commodityFixed } = await reconcileFundMargin(fund);
 
-              if (intradayFixed || deliveryFixed) {
+              if (intradayFixed || deliveryFixed || commodityFixed) {
                 await fund.save();
                 if (intradayFixed) intradayFixedCount += 1;
                 if (deliveryFixed) deliveryFixedCount += 1;
+                if (commodityFixed) commodityFixedCount += 1;
               } else {
                 cleanCount += 1;
               }
@@ -175,7 +220,7 @@ const FundCronJobs = () => {
           }
 
           console.log(
-            `[CRON] Reconciliation done: ${intradayFixedCount} intraday corrected, ${deliveryFixedCount} delivery corrected, ${cleanCount} clean.`
+            `[CRON] Reconciliation done: ${intradayFixedCount} intraday corrected, ${deliveryFixedCount} delivery corrected, ${commodityFixedCount} commodity corrected, ${cleanCount} clean.`
           );
         } catch (error) {
           console.error('[CRON] Error in midnight margin reconciliation:', error);

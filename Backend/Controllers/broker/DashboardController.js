@@ -212,6 +212,20 @@ const getProfile = asyncHandler(async (req, res) => {
       supportEmail: broker.support_email,
       upiId: broker.upi_id,
       paymentQrUrl: broker.payment_qr_url,
+      paymentQrPublicId: broker.payment_qr_public_id,
+      paymentQrSettings: {
+        scale: broker.payment_qr_settings?.scale ?? 1,
+        offsetX: broker.payment_qr_settings?.offset_x ?? 0,
+        offsetY: broker.payment_qr_settings?.offset_y ?? 0,
+        padding: broker.payment_qr_settings?.padding ?? 8,
+      },
+      bankTransferDetails: {
+        bankName: broker.bank_transfer_details?.bank_name || '',
+        accountHolderName: broker.bank_transfer_details?.account_holder_name || '',
+        accountNumber: broker.bank_transfer_details?.account_number || '',
+        ifscCode: broker.bank_transfer_details?.ifsc_code || '',
+        accountType: broker.bank_transfer_details?.account_type || 'current',
+      },
       address: broker.address,
       status: broker.status,
       kycVerified: broker.kyc_verified,
@@ -254,11 +268,23 @@ const getAlerts = asyncHandler(async (req, res) => {
     { $limit: 10 }
   ]);
 
+  // Batch-lookup names for high-margin clients
+  const marginClientIds = highMarginClients.map(c => c.customer_id_str).filter(Boolean);
+  const marginNameMap = {};
+  if (marginClientIds.length > 0) {
+    const marginCustomers = await CustomerModel.find({ customer_id: { $in: marginClientIds } })
+      .select('customer_id name')
+      .lean();
+    marginCustomers.forEach(c => { marginNameMap[c.customer_id] = c.name; });
+  }
+
   highMarginClients.forEach(client => {
+    const name = marginNameMap[client.customer_id_str];
+    const clientLabel = name ? `${name} (${client.customer_id_str})` : client.customer_id_str;
     alerts.push({
       type: 'margin_warning',
       severity: 'warning',
-      message: `Client ${client.customer_id_str} has ${Math.round(client.usage * 100)}% margin utilization`,
+      message: `Client ${clientLabel} has ${Math.round(client.usage * 100)}% margin utilization`,
       timestamp: new Date(),
     });
   });
@@ -337,15 +363,34 @@ const getActivityFeed = asyncHandler(async (req, res) => {
     .limit(safeLimit)
     .select('customer_id_str customer_name amount status reviewed_at createdAt updatedAt');
 
+  // Batch-lookup customer names for all order activities
+  const orderCustomerIds = [
+    ...recentOrders.map(o => o.customer_id_str),
+    ...recentModifiedOrders.map(o => o.customer_id_str),
+  ].filter(Boolean);
+  const uniqueOrderCustomerIds = [...new Set(orderCustomerIds)];
+
+  const customerNameMap = {};
+  if (uniqueOrderCustomerIds.length > 0) {
+    const customers = await CustomerModel.find({ customer_id: { $in: uniqueOrderCustomerIds } })
+      .select('customer_id name')
+      .lean();
+    customers.forEach(c => {
+      customerNameMap[c.customer_id] = c.name;
+    });
+  }
+
   // Combine activities
   const activities = [];
 
   recentOrders.forEach(order => {
+    const customerName = customerNameMap[order.customer_id_str] || '';
     activities.push({
       type: 'order',
       message: `${order.side} ${order.quantity} ${order.symbol} @ ₹${order.price}`,
       status: order.order_status || order.status,
       user: order.customer_id_str,
+      userName: customerName,
       timestamp: order.createdAt,
     });
   });
@@ -357,11 +402,13 @@ const getActivityFeed = asyncHandler(async (req, res) => {
     const newPrice = mod?.new_price != null ? `₹${Number(mod.new_price).toFixed(2)}` : '?';
     const oldQty = mod?.old_quantity ?? '?';
     const newQty = mod?.new_quantity ?? order.quantity;
+    const customerName = customerNameMap[order.customer_id_str] || '';
     activities.push({
       type: 'order_modify',
       message: `Modified ${order.side} ${order.symbol} | Qty: ${oldQty} → ${newQty}${addedLots > 0 ? ` (+${addedLots} lots)` : ''} | Avg: ${oldPrice} → ${newPrice}`,
       status: order.order_status || order.status,
       user: order.customer_id_str,
+      userName: customerName,
       timestamp: order.modified_at,
       meta: mod || null,
     });
@@ -372,6 +419,7 @@ const getActivityFeed = asyncHandler(async (req, res) => {
       type: 'client_joined',
       message: `New client registered: ${customer.name}`,
       user: customer.customer_id,
+      userName: customer.name,
       timestamp: customer.createdAt,
     });
   });

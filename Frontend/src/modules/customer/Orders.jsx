@@ -90,7 +90,7 @@ const sanitizeOrdersStateForCache = (state) => ({
 const Orders = () => {
   const navigate = useNavigate();
   const { ticksRef, tickUpdatedAtRef, subscribe, unsubscribe, isConnected } = useMarketData();
-  const { isCustomerTradeAllowed, marketClosedReason } = useCustomerTradingGate();
+  const { isCustomerTradeAllowed, marketClosedReason, isTradingAllowed, getClosedMessage } = useCustomerTradingGate();
   const { user } = useAuth();
   const holdingsExitAllowed = user?.holdingsExitAllowed === true;
   const [activeTab, setActiveTab] = useState('open');
@@ -167,11 +167,10 @@ const Orders = () => {
           : '';
 
         // Derive quantity from lots × lot_size as the source of truth.
-        // `lots` is always correctly updated by the backend (including after modifications),
-        // while the raw `quantity` field can lag after lot additions — causing P&L to be
-        // calculated for the original lot count instead of the current total.
+        // MCX orders use units_per_contract as the lot multiplier.
         const derivedLots = toNumber(order.lots);
-        const derivedLotSize = Math.max(1, toNumber(order.lot_size));
+        const upc = toNumber(order.units_per_contract);
+        const derivedLotSize = upc > 0 ? upc : Math.max(1, toNumber(order.lot_size));
         const derivedQuantity = derivedLots > 0
           ? derivedLots * derivedLotSize
           : toNumber(order.quantity);
@@ -198,6 +197,7 @@ const Orders = () => {
           segment: order.segment,
           lots: order.lots,
           lot_size: order.lot_size,
+          units_per_contract: upc,
           stop_loss: order.stop_loss || 0,
           target: order.target || 0,
           closed_ltp: toNumber(order.closed_ltp),
@@ -681,7 +681,7 @@ const Orders = () => {
                 activeTab === 'holdings' &&
                 ['PENDING', 'PENDING_APPROVAL', 'TRIGGER_PENDING', 'AMO'].includes(status);
               const isActionableOrder = isActionableOrderRow(order);
-              const isHoldingActionBlocked = activeTab === 'holdings' && !isCustomerTradeAllowed;
+              const isHoldingActionBlocked = activeTab === 'holdings' && !isTradingAllowed({ exchange: order.exchange, segment: order.segment });
               const canShowActions =
                 (activeTab === 'open' || activeTab === 'holdings') &&
                 !isPendingHolding &&
@@ -728,7 +728,7 @@ const Orders = () => {
                               : 'text-red-500 bg-red-50'
                           }`}>{order.side || '-'}</span>
                           <span className="size-1 bg-gray-300 rounded-full"></span>
-                          <span>{order.quantity} Qty</span>
+                          <span>{order.quantity} {order.units_per_contract > 0 ? 'Units' : 'Qty'}</span>
                         </div>
                       </div>
                       <div className="flex flex-col items-end shrink-0">
@@ -747,7 +747,7 @@ const Orders = () => {
                         <span className="text-[#111418] dark:text-[#e8f3ee] font-medium tabular-nums">₹{order.price?.toFixed(2)}</span>
                       </div>
                       <div className="flex flex-col rounded-lg bg-[#f6f7f8] dark:bg-[#111b17] px-2 py-1.5">
-                        <span className="text-[#7a8996] dark:text-[#6f8b7f] uppercase tracking-[0.04em]">Qty</span>
+                        <span className="text-[#7a8996] dark:text-[#6f8b7f] uppercase tracking-[0.04em]">{order.units_per_contract > 0 ? 'Units' : 'Qty'}</span>
                         <span className="text-[#111418] dark:text-[#e8f3ee] font-medium tabular-nums">{order.quantity}</span>
                       </div>
                       <div className="flex flex-col rounded-lg bg-[#f6f7f8] dark:bg-[#111b17] px-2 py-1.5">
@@ -760,7 +760,7 @@ const Orders = () => {
                   {activeTab === 'holdings' && order.validity_expires_at && order.validity_mode !== 'INTRADAY_DAY' && (
                     <div className="px-3 sm:px-4 pb-1 flex items-center gap-1.5 text-[10px] sm:text-xs text-[#617589] dark:text-[#9cb7aa]">
                       <span className="material-symbols-outlined text-[14px]">schedule</span>
-                      <span>Valid till {new Date(order.validity_expires_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}, 3:15 PM</span>
+                      <span>Valid till {new Date(order.validity_expires_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}{(order.exchange || '').toUpperCase().includes('MCX') || (order.segment || '').toUpperCase().includes('MCX') ? ', 11:00 PM' : ', 3:15 PM'}</span>
                       {order.validity_extended_count > 0 && (
                         <span className="text-[9px] text-[#617589]">(+{order.validity_extended_count}x extended)</span>
                       )}
@@ -802,7 +802,7 @@ const Orders = () => {
                   )}
                   {isHoldingActionBlocked && !isPendingHolding && (
                     <div className="px-3 py-2 text-[10px] sm:text-xs text-amber-700 bg-amber-50 dark:bg-amber-900/20 border-t border-amber-100 dark:border-amber-900/30">
-                      {marketClosedReason}
+                      {getClosedMessage({ exchange: order.exchange, segment: order.segment }) || marketClosedReason}
                     </div>
                   )}
                 </div>
@@ -818,7 +818,8 @@ const Orders = () => {
         order={modifyOrder}
         onClose={() => setModifyOrder(null)}
         onModified={() => fetchOrders({ force: true })}
-        marketClosedForCustomer={!isCustomerTradeAllowed}
+        marketClosedForCustomer={modifyOrder ? !isTradingAllowed({ exchange: modifyOrder.exchange, segment: modifyOrder.segment }) : false}
+        marketClosedReason={modifyOrder ? getClosedMessage({ exchange: modifyOrder.exchange, segment: modifyOrder.segment }) : ''}
         livePrices={livePrices}
       />
 
@@ -846,8 +847,8 @@ const Orders = () => {
         onConfirm={handleExitConfirm}
         submitting={exitSubmitting}
         error={exitError}
-        marketClosedForCustomer={!isCustomerTradeAllowed}
-        marketClosedReason={marketClosedReason}
+        marketClosedForCustomer={exitOrder ? !isTradingAllowed({ exchange: exitOrder.exchange, segment: exitOrder.segment }) : false}
+        marketClosedReason={exitOrder ? (getClosedMessage({ exchange: exitOrder.exchange, segment: exitOrder.segment }) || marketClosedReason) : marketClosedReason}
       />
     </div>
   );

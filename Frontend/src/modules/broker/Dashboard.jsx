@@ -355,7 +355,9 @@ const Dashboard = () => {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex justify-between items-start">
-                        <h4 className="text-xs sm:text-sm font-bold text-[#111418] truncate">{activity.user || 'System'}</h4>
+                        <h4 className="text-xs sm:text-sm font-bold text-[#111418] truncate">
+                          {activity.userName ? `${activity.userName} (${activity.user})` : activity.user || 'System'}
+                        </h4>
                         <span className="text-[9px] sm:text-[10px] font-medium text-gray-400 bg-gray-50 px-1 sm:px-1.5 py-0.5 rounded ml-2 whitespace-nowrap">{timeAgo(activity.timestamp)}</span>
                       </div>
                       <p className="text-[11px] sm:text-xs text-gray-500 truncate mt-0.5">{activity.message}</p>

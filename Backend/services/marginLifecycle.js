@@ -6,13 +6,13 @@
  *
  * Business Rules:
  * - MIS placement: lock intraday margin (intraday.used_limit += margin)
- * - MIS close: do NOT release intraday margin immediately. Stays locked until midnight reset.
+ * - MIS close: release intraday margin immediately via releaseMarginOnClose()
  * - CNC/NRML placement: lock delivery margin (overnight.available_limit -= margin, delivery.used_limit += margin)
- * - CNC/NRML close: do NOT release delivery margin immediately. Stays locked until midnight.
+ * - CNC/NRML close: release delivery margin immediately via releaseMarginOnClose()
  * - CNC rejection: immediate refund (delivery.used_limit -= margin, overnight.available_limit += margin)
- * - Midnight intraday: unconditional reset of intraday.used_limit to 0
- * - Midnight delivery: release delivery.used_limit only when ALL CNC/NRML/HOLD orders are closed
- * - HOLD conversion (MIS->HOLD): reserve delivery margin, keep intraday locked
+ * - Midnight intraday: backstop reset of intraday.used_limit to 0 (clears any residual leaked margin)
+ * - Midnight delivery: backstop release of delivery.used_limit only when ALL CNC/NRML/HOLD orders are closed
+ * - HOLD conversion (MIS->HOLD): reserve delivery margin, keep intraday locked until midnight backstop
  *
  * Option orders use OptionLimitManager directly (separate cap system, resets daily).
  */
@@ -20,6 +20,7 @@
 import Order from '../Model/Trading/OrdersModel.js';
 import Fund from '../Model/FundManagement/FundModel.js';
 import { writeAuditSuccess } from '../Utils/AuditLogger.js';
+import { isMCX } from '../Utils/mcx/resolver.js';
 
 const toNumber = (v) => {
   const n = Number(v);
@@ -80,11 +81,14 @@ const emitMarginAudit = ({
 
 /**
  * Determine margin bucket for an order.
- * Returns 'intraday' or 'delivery'.
+ * Returns 'intraday', 'delivery', or 'commodity_delivery'.
  */
-export function getMarginBucket(product) {
+export function getMarginBucket(product, { exchange, segment } = {}) {
   const p = String(product).trim().toUpperCase();
-  if (p === 'CNC' || p === 'NRML') return 'delivery';
+  if (p === 'CNC' || p === 'NRML') {
+    if (isMCX({ exchange, segment })) return 'commodity_delivery';
+    return 'delivery';
+  }
   return 'intraday';
 }
 
@@ -109,6 +113,15 @@ export function reserveMargin(fund, bucket, amount) {
       };
     }
     fund.intraday.used_limit = toNumber(fund.intraday.used_limit) + amount;
+  } else if (bucket === 'commodity_delivery') {
+    const available = toNumber(fund.commodity_delivery?.available_limit) - toNumber(fund.commodity_delivery?.used_limit);
+    if (amount > available) {
+      return {
+        ok: false,
+        error: `Insufficient Commodity Margin! Required: ${amount.toFixed(2)}, Available: ${available.toFixed(2)}`,
+      };
+    }
+    fund.commodity_delivery.used_limit = toNumber(fund.commodity_delivery.used_limit) + amount;
   } else {
     // delivery
     const available = toNumber(fund.overnight?.available_limit);
@@ -148,10 +161,12 @@ export function releaseMarginOnClose(fund, order, opts = {}) {
   const amount = toNumber(order.margin_blocked);
   if (amount <= 0) return;
 
-  const bucket = getMarginBucket(order.product);
+  const bucket = getMarginBucket(order.product, { exchange: order.exchange, segment: order.segment });
 
   if (bucket === 'intraday') {
     fund.intraday.used_limit = Math.max(0, toNumber(fund.intraday.used_limit) - amount);
+  } else if (bucket === 'commodity_delivery') {
+    fund.commodity_delivery.used_limit = Math.max(0, toNumber(fund.commodity_delivery?.used_limit) - amount);
   } else {
     fund.overnight.available_limit = toNumber(fund.overnight.available_limit) + amount;
     fund.delivery.used_limit = Math.max(0, toNumber(fund.delivery?.used_limit) - amount);
@@ -188,6 +203,8 @@ export function refundMarginImmediate(fund, bucket, amount, opts = {}) {
 
   if (bucket === 'intraday') {
     fund.intraday.used_limit = Math.max(0, toNumber(fund.intraday.used_limit) - amount);
+  } else if (bucket === 'commodity_delivery') {
+    fund.commodity_delivery.used_limit = Math.max(0, toNumber(fund.commodity_delivery?.used_limit) - amount);
   } else {
     // delivery: release back to overnight available + decrement delivery used
     fund.overnight.available_limit = toNumber(fund.overnight.available_limit) + amount;
@@ -270,6 +287,37 @@ export function reserveDeliveryForHoldConversion(fund, amount, opts = {}) {
 }
 
 /**
+ * Reserve commodity delivery margin for MCX MIS→HOLD conversion.
+ * Does NOT release intraday margin (stays locked until midnight).
+ */
+export function reserveCommodityDeliveryForHoldConversion(fund, amount, opts = {}) {
+  if (amount <= 0) return { ok: true };
+
+  const available = toNumber(fund.commodity_delivery?.available_limit) - toNumber(fund.commodity_delivery?.used_limit);
+  if (amount > available) {
+    return {
+      ok: false,
+      error: `Insufficient Commodity Margin for Hold conversion. Required: ${amount.toFixed(2)}, Available: ${available.toFixed(2)}`,
+    };
+  }
+
+  fund.commodity_delivery.used_limit = toNumber(fund.commodity_delivery.used_limit) + amount;
+
+  fund.transactions.push({
+    type: 'margin_locked_commodity_delivery',
+    amount: round2(-amount),
+    notes: `MCX MIS→HOLD conversion: commodity delivery margin locked${opts.orderId ? ` | Order: ${opts.orderId}` : ''}`,
+    status: 'completed',
+    reference: opts.orderId ? String(opts.orderId) : '',
+    timestamp: new Date(),
+  });
+
+  fund.last_calculated_at = new Date();
+  console.log(`[marginLifecycle] MCX Hold conversion: reserved commodity_delivery ₹${amount.toFixed(2)}`);
+  return { ok: true };
+}
+
+/**
  * Midnight reset for intraday margin.
  * Unconditionally resets intraday.used_limit to 0.
  * Should be called for every fund record at midnight.
@@ -346,6 +394,35 @@ export function midnightReleaseDelivery(fund, activeDeliveryOrderCount) {
 }
 
 /**
+ * Midnight release for commodity delivery margin.
+ * Only releases if ALL MCX CNC orders are closed for the customer.
+ */
+export function midnightReleaseCommodityDelivery(fund, activeMcxDeliveryCount) {
+  const used = toNumber(fund.commodity_delivery?.used_limit);
+
+  if (activeMcxDeliveryCount > 0) {
+    console.log(`[marginLifecycle] Commodity delivery margin ₹${used.toFixed(2)} carried forward (${activeMcxDeliveryCount} active MCX orders)`);
+    return false;
+  }
+
+  if (used <= 0) return false;
+
+  fund.commodity_delivery.used_limit = 0;
+
+  fund.transactions.push({
+    type: 'margin_released_midnight_commodity',
+    amount: round2(used),
+    notes: `Midnight commodity delivery margin release: ₹${used.toFixed(2)} released (all MCX delivery orders closed)`,
+    status: 'completed',
+    timestamp: new Date(),
+  });
+
+  fund.last_calculated_at = new Date();
+  console.log(`[marginLifecycle] Commodity delivery margin ₹${used.toFixed(2)} released at midnight`);
+  return true;
+}
+
+/**
  * Run full midnight margin reset/release for a single customer fund.
  * Handles both intraday reset and conditional delivery release.
  *
@@ -357,13 +434,31 @@ export async function runMidnightMarginReset(fund, customerIdStr, brokerIdStr) {
   // 1. Always reset intraday
   midnightResetIntraday(fund);
 
-  // 2. Conditionally release delivery
+  // 2. Conditionally release equity delivery
   const activeDeliveryOrders = await Order.countDocuments({
     customer_id_str: customerIdStr,
     broker_id_str: brokerIdStr,
     product: { $in: ['CNC', 'NRML'] },
     status: { $in: ['OPEN', 'EXECUTED', 'HOLD', 'PENDING'] },
+    $nor: [
+      { exchange: { $regex: /MCX/i } },
+      { segment: { $regex: /MCX/i } },
+    ],
   });
 
   midnightReleaseDelivery(fund, activeDeliveryOrders);
+
+  // 3. Conditionally release commodity delivery (MCX CNC)
+  const activeMcxDeliveryOrders = await Order.countDocuments({
+    customer_id_str: customerIdStr,
+    broker_id_str: brokerIdStr,
+    product: { $in: ['CNC', 'NRML'] },
+    status: { $in: ['OPEN', 'EXECUTED', 'HOLD', 'PENDING'] },
+    $or: [
+      { exchange: { $regex: /MCX/i } },
+      { segment: { $regex: /MCX/i } },
+    ],
+  });
+
+  midnightReleaseCommodityDelivery(fund, activeMcxDeliveryOrders);
 }

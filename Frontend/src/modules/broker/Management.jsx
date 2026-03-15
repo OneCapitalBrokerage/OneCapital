@@ -35,9 +35,13 @@ const DEFAULT_BROKERAGE_FORM = {
 
 const DEFAULT_SPREAD_FORM = {
   cash: '0',
+  cash_mode: 'ABSOLUTE',
   future: '0',
+  future_mode: 'ABSOLUTE',
   option: '0',
+  option_mode: 'ABSOLUTE',
   mcx: '0',
+  mcx_mode: 'ABSOLUTE',
 };
 
 const toNumber = (value) => {
@@ -46,6 +50,12 @@ const toNumber = (value) => {
 };
 
 const clampNonNegative = (value) => Math.max(0, toNumber(value));
+
+const formatCurrency = (value) =>
+  `₹${clampNonNegative(value).toLocaleString('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 
 const getClientId = (client) => String(client?.id || client?._id || '');
 
@@ -85,6 +95,15 @@ const mapBalance = (response) => {
       balance.optionChain?.limit ??
       (openingBalance * optionChainLimitPercent) / 100
   );
+  const commodityDeliveryAvailable = clampNonNegative(
+    funds.commodityDeliveryAvailable ?? balance.commodityDelivery?.available ?? data.commodityDeliveryAvailable
+  );
+  const commodityDeliveryUsed = clampNonNegative(
+    funds.commodityDeliveryUsed ?? balance.commodityDelivery?.used ?? data.commodityDeliveryUsed
+  );
+  const commodityOptionLimitPercent = clampNonNegative(
+    funds.commodityOptionLimitPercent ?? balance.commodityOption?.percentage ?? DEFAULT_OPTION_CHAIN_PERCENT
+  );
 
   return {
     depositedCash,
@@ -95,6 +114,9 @@ const mapBalance = (response) => {
     longTermAvailable,
     optionChainLimit,
     optionChainLimitPercent,
+    commodityDeliveryAvailable,
+    commodityDeliveryUsed,
+    commodityOptionLimitPercent,
   };
 };
 
@@ -134,9 +156,13 @@ const normalizePricingResponse = (response) => {
     },
     spread: {
       cash: String(spread.cash ?? DEFAULT_SPREAD_FORM.cash),
+      cash_mode: spread.cash_mode === 'PERCENT' ? 'PERCENT' : 'ABSOLUTE',
       future: String(spread.future ?? DEFAULT_SPREAD_FORM.future),
+      future_mode: spread.future_mode === 'PERCENT' ? 'PERCENT' : 'ABSOLUTE',
       option: String(spread.option ?? DEFAULT_SPREAD_FORM.option),
+      option_mode: spread.option_mode === 'PERCENT' ? 'PERCENT' : 'ABSOLUTE',
       mcx: String(spread.mcx ?? DEFAULT_SPREAD_FORM.mcx),
+      mcx_mode: spread.mcx_mode === 'PERCENT' ? 'PERCENT' : 'ABSOLUTE',
     },
   };
 };
@@ -159,6 +185,8 @@ const Management = () => {
     intradayAvailable: '',
     longTermAvailable: '',
     optionLimitPercentage: '',
+    commodityDeliveryAvailable: '',
+    commodityOptionLimitPercentage: '',
   });
 
   const [pricingBaseline, setPricingBaseline] = useState({
@@ -207,13 +235,21 @@ const Management = () => {
     return Number(((computedOpeningBalance * optionPercent) / 100).toFixed(2));
   }, [computedOpeningBalance, fundForm.optionLimitPercentage]);
 
+  const commodityOptionPreview = useMemo(() => {
+    const optionPercent = clampNonNegative(fundForm.commodityOptionLimitPercentage);
+    const commodityBase = clampNonNegative(fundForm.commodityDeliveryAvailable);
+    return Number(((commodityBase * optionPercent) / 100).toFixed(2));
+  }, [fundForm.commodityDeliveryAvailable, fundForm.commodityOptionLimitPercentage]);
+
   const hasFundChanges = useMemo(() => {
     if (!fundBaseline) return false;
     return (
       clampNonNegative(fundForm.depositedCash) !== fundBaseline.depositedCash ||
       clampNonNegative(fundForm.intradayAvailable) !== fundBaseline.intradayAvailable ||
       clampNonNegative(fundForm.longTermAvailable) !== fundBaseline.longTermAvailable ||
-      clampNonNegative(fundForm.optionLimitPercentage) !== fundBaseline.optionChainLimitPercent
+      clampNonNegative(fundForm.optionLimitPercentage) !== fundBaseline.optionChainLimitPercent ||
+      clampNonNegative(fundForm.commodityDeliveryAvailable) !== fundBaseline.commodityDeliveryAvailable ||
+      clampNonNegative(fundForm.commodityOptionLimitPercentage) !== fundBaseline.commodityOptionLimitPercent
     );
   }, [fundForm, fundBaseline]);
 
@@ -236,6 +272,8 @@ const Management = () => {
       intradayAvailable: '',
       longTermAvailable: '',
       optionLimitPercentage: '',
+      commodityDeliveryAvailable: '',
+      commodityOptionLimitPercentage: '',
     });
     setPricingBaseline({
       brokerage: DEFAULT_BROKERAGE_FORM,
@@ -271,6 +309,8 @@ const Management = () => {
         intradayAvailable: String(snapshot.intradayAvailable),
         longTermAvailable: String(snapshot.longTermAvailable),
         optionLimitPercentage: String(snapshot.optionChainLimitPercent),
+        commodityDeliveryAvailable: String(snapshot.commodityDeliveryAvailable),
+        commodityOptionLimitPercentage: String(snapshot.commodityOptionLimitPercent),
       });
       setNote('');
     } catch (err) {
@@ -326,6 +366,8 @@ const Management = () => {
       intradayAvailable: clampNonNegative(fundForm.intradayAvailable),
       longTermAvailable: clampNonNegative(fundForm.longTermAvailable),
       optionLimitPercentage: clampNonNegative(fundForm.optionLimitPercentage),
+      commodityDeliveryAvailable: clampNonNegative(fundForm.commodityDeliveryAvailable),
+      commodityOptionLimitPercentage: clampNonNegative(fundForm.commodityOptionLimitPercentage),
       note: note.trim(),
     };
 
@@ -341,6 +383,8 @@ const Management = () => {
         intradayAvailable: String(nextSnapshot.intradayAvailable),
         longTermAvailable: String(nextSnapshot.longTermAvailable),
         optionLimitPercentage: String(nextSnapshot.optionChainLimitPercent),
+        commodityDeliveryAvailable: String(nextSnapshot.commodityDeliveryAvailable),
+        commodityOptionLimitPercentage: String(nextSnapshot.commodityOptionLimitPercent),
       });
       setNote('');
       setSuccess(`Funds updated for ${selectedClient.name || getClientId(selectedClient)}.`);
@@ -391,9 +435,13 @@ const Management = () => {
     const payload = {
       spread: {
         cash: toNumber(spreadForm.cash),
+        cash_mode: spreadForm.cash_mode || 'ABSOLUTE',
         future: toNumber(spreadForm.future),
+        future_mode: spreadForm.future_mode || 'ABSOLUTE',
         option: toNumber(spreadForm.option),
+        option_mode: spreadForm.option_mode || 'ABSOLUTE',
         mcx: toNumber(spreadForm.mcx),
+        mcx_mode: spreadForm.mcx_mode || 'ABSOLUTE',
       },
     };
 
@@ -581,10 +629,8 @@ const Management = () => {
 
                       <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-3">
                         <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Opening Balance (Auto)</p>
-                        <p className="text-lg font-bold text-[#111418]">
-                          {computedOpeningBalance.toLocaleString('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2 })}
-                        </p>
-                        <p className="text-[10px] text-[#617589]">Intraday + Delivery limits</p>
+                        <p className="text-lg font-bold text-[#111418]">{formatCurrency(computedOpeningBalance)}</p>
+                        <p className="text-[10px] text-[#617589]">Intraday + delivery margin</p>
                       </div>
 
                       <label className="rounded-xl border border-gray-200 p-3">
@@ -601,7 +647,7 @@ const Management = () => {
                       </label>
 
                       <label className="rounded-xl border border-gray-200 p-3">
-                        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Delivery / Long-Term</p>
+                        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Delivery Margin</p>
                         <input
                           type="number"
                           min="0"
@@ -614,7 +660,7 @@ const Management = () => {
                       </label>
 
                       <label className="rounded-xl border border-gray-200 p-3">
-                        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Option Limit %</p>
+                        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Option Premium (%)</p>
                         <input
                           type="number"
                           min="0"
@@ -629,11 +675,67 @@ const Management = () => {
 
                       <div className="rounded-xl border border-dashed border-[#137fec]/40 bg-[#137fec]/5 p-3">
                         <p className="text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Option Premium Limit (Auto)</p>
-                        <p className="mt-1 text-lg font-bold text-[#137fec]">
-                          ₹{optionChainPreview.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                        </p>
+                        <p className="mt-1 text-lg font-bold text-[#137fec]">{formatCurrency(optionChainPreview)}</p>
                         <p className="text-[10px] text-[#617589]">
                           {clampNonNegative(fundForm.optionLimitPercentage)}% of opening balance. Deducted from respective margin bucket.
+                        </p>
+                      </div>
+
+                      <div className="col-span-1 mt-1 rounded-xl border border-amber-200 bg-amber-50/50 p-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-700">Commodities (MCX)</p>
+                      </div>
+
+                      <label className="rounded-xl border border-gray-200 p-3">
+                        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Commodities Delivery Margin</p>
+                        <input
+                          type="number"
+                          min="0"
+                          value={fundForm.commodityDeliveryAvailable}
+                          onChange={(event) =>
+                            setFundForm((prev) => ({ ...prev, commodityDeliveryAvailable: event.target.value }))
+                          }
+                          className="w-full bg-transparent text-lg font-bold text-[#111418] outline-none"
+                        />
+                      </label>
+
+                      <label className="rounded-xl border border-gray-200 p-3">
+                        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Commodities Option Premium (%)</p>
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={fundForm.commodityOptionLimitPercentage}
+                          onChange={(event) =>
+                            setFundForm((prev) => ({ ...prev, commodityOptionLimitPercentage: event.target.value }))
+                          }
+                          className="w-full bg-transparent text-lg font-bold text-[#111418] outline-none"
+                        />
+                      </label>
+
+                      <div className="rounded-xl border border-dashed border-amber-400/40 bg-amber-50/50 p-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Commodities Option Premium Limit (Auto)</p>
+                        <p className="mt-1 text-lg font-bold text-amber-600">{formatCurrency(commodityOptionPreview)}</p>
+                        <p className="text-[10px] text-[#617589]">
+                          {clampNonNegative(fundForm.commodityOptionLimitPercentage)}% of commodities delivery margin.
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl bg-gray-50 p-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Current Snapshot</p>
+                        <p className="mt-1 text-xs text-[#617589]">
+                          Intraday Used: <span className="font-semibold text-[#111418]">{formatCurrency(fundBaseline?.intradayUsed || 0)}</span>
+                        </p>
+                        <p className="text-xs text-[#617589]">
+                          Existing Option Premium: <span className="font-semibold text-[#111418]">{formatCurrency(fundBaseline?.optionChainLimit || 0)}</span>
+                        </p>
+                        <p className="text-xs text-[#617589]">
+                          Existing Option %: <span className="font-semibold text-[#111418]">{clampNonNegative(fundBaseline?.optionChainLimitPercent || 0)}%</span>
+                        </p>
+                        <p className="text-xs text-[#617589]">
+                          Commodities Delivery Used: <span className="font-semibold text-[#111418]">{formatCurrency(fundBaseline?.commodityDeliveryUsed || 0)}</span>
+                        </p>
+                        <p className="text-xs text-[#617589]">
+                          Commodities Option %: <span className="font-semibold text-[#111418]">{clampNonNegative(fundBaseline?.commodityOptionLimitPercent || 0)}%</span>
                         </p>
                       </div>
 
@@ -701,58 +803,67 @@ const Management = () => {
 
                   {activeModule === 'spread' && (
                     <div className="grid grid-cols-1 gap-2.5">
-                      <label className="rounded-xl border border-gray-200 p-3">
-                        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Cash Spread (₹)</p>
-                        <input
-                          type="number"
-                          value={spreadForm.cash}
-                          onChange={(event) =>
-                            setSpreadForm((prev) => ({ ...prev, cash: event.target.value }))
-                          }
-                          className="w-full bg-transparent text-lg font-bold text-[#111418] outline-none"
-                        />
-                      </label>
-
-                      <label className="rounded-xl border border-gray-200 p-3">
-                        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Future Spread (₹)</p>
-                        <input
-                          type="number"
-                          value={spreadForm.future}
-                          onChange={(event) =>
-                            setSpreadForm((prev) => ({ ...prev, future: event.target.value }))
-                          }
-                          className="w-full bg-transparent text-lg font-bold text-[#111418] outline-none"
-                        />
-                      </label>
-
-                      <label className="rounded-xl border border-gray-200 p-3">
-                        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Option Spread (₹)</p>
-                        <input
-                          type="number"
-                          value={spreadForm.option}
-                          onChange={(event) =>
-                            setSpreadForm((prev) => ({ ...prev, option: event.target.value }))
-                          }
-                          className="w-full bg-transparent text-lg font-bold text-[#111418] outline-none"
-                        />
-                      </label>
-
-                      <label className="rounded-xl border border-gray-200 p-3">
-                        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#617589]">MCX Spread (₹)</p>
-                        <input
-                          type="number"
-                          value={spreadForm.mcx}
-                          onChange={(event) =>
-                            setSpreadForm((prev) => ({ ...prev, mcx: event.target.value }))
-                          }
-                          className="w-full bg-transparent text-lg font-bold text-[#111418] outline-none"
-                        />
-                      </label>
+                      {[
+                        { key: 'cash', label: 'Cash Spread' },
+                        { key: 'future', label: 'Future Spread' },
+                        { key: 'option', label: 'Option Spread' },
+                        { key: 'mcx', label: 'MCX Spread' },
+                      ].map(({ key, label }) => {
+                        const modeKey = `${key}_mode`;
+                        const isPercent = spreadForm[modeKey] === 'PERCENT';
+                        return (
+                          <div key={key} className="rounded-xl border border-gray-200 p-3">
+                            <div className="mb-2 flex items-center justify-between">
+                              <p className="text-[11px] font-semibold uppercase tracking-wider text-[#617589]">
+                                {label} ({isPercent ? '%' : '₹'})
+                              </p>
+                              <div className="flex rounded-lg bg-gray-100 p-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setSpreadForm((prev) => ({ ...prev, [modeKey]: 'ABSOLUTE' }))}
+                                  className={`rounded-md px-2.5 py-1 text-[10px] font-bold transition-all ${
+                                    !isPercent
+                                      ? 'bg-white text-[#111418] shadow-sm'
+                                      : 'text-[#617589]'
+                                  }`}
+                                >
+                                  ₹ Flat
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setSpreadForm((prev) => ({ ...prev, [modeKey]: 'PERCENT' }))}
+                                  className={`rounded-md px-2.5 py-1 text-[10px] font-bold transition-all ${
+                                    isPercent
+                                      ? 'bg-white text-[#111418] shadow-sm'
+                                      : 'text-[#617589]'
+                                  }`}
+                                >
+                                  % Price
+                                </button>
+                              </div>
+                            </div>
+                            <input
+                              type="number"
+                              value={spreadForm[key]}
+                              onChange={(event) =>
+                                setSpreadForm((prev) => ({ ...prev, [key]: event.target.value }))
+                              }
+                              className="w-full bg-transparent text-lg font-bold text-[#111418] outline-none"
+                            />
+                            {isPercent && (
+                              <p className="mt-1 text-[10px] text-[#617589]">
+                                Spread = market price × {toNumber(spreadForm[key])}%
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
 
                       <div className="rounded-xl border border-dashed border-[#137fec]/30 bg-[#137fec]/5 p-3">
                         <p className="text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Execution Logic</p>
                         <p className="mt-1 text-xs text-[#111418]">BUY effective = market + spread</p>
                         <p className="text-xs text-[#111418]">SELL effective = market - spread</p>
+                        <p className="mt-1 text-[10px] text-[#617589]">Flat: spread is fixed rupee amount. Percent: spread is derived from market price.</p>
                       </div>
                     </div>
                   )}
@@ -777,6 +888,8 @@ const Management = () => {
                             intradayAvailable: String(fundBaseline.intradayAvailable),
                             longTermAvailable: String(fundBaseline.longTermAvailable),
                             optionLimitPercentage: String(fundBaseline.optionChainLimitPercent),
+                            commodityDeliveryAvailable: String(fundBaseline.commodityDeliveryAvailable),
+                            commodityOptionLimitPercentage: String(fundBaseline.commodityOptionLimitPercent),
                           });
                           setNote('');
                         }

@@ -137,6 +137,10 @@ const globalRetainedTokens = new Set();
 const INDEX_TOKENS = ['256265', '260105', '265']; // NIFTY 50, NIFTY BANK, SENSEX
 const INDEX_TOKEN_SET = new Set(INDEX_TOKENS);
 
+// Landing-page warm tokens — backend-owned fixed set, always kept alive like index tokens
+const LANDING_TOKENS = ['259849', '738561', '408065', '2953217', '341249', '969473']; // NIFTY IT, RELIANCE, INFY, TCS, HDFC BANK, WIPRO
+const LANDING_TOKEN_SET = new Set(LANDING_TOKENS);
+
 const isGloballyRetained = (token) => globalRetainedTokens.has(String(token));
 const isIndexToken = (token) => INDEX_TOKEN_SET.has(String(token));
 
@@ -215,7 +219,7 @@ export async function syncGlobalWatchlistTokens() {
     }
   }
 
-  const newSet = new Set([...indexTokenSet, ...stockTokens]);
+  const newSet = new Set([...indexTokenSet, ...stockTokens, ...LANDING_TOKEN_SET]);
 
   // Diff against current set
   const toAdd = [];
@@ -255,7 +259,7 @@ export async function syncGlobalWatchlistTokens() {
     console.warn(`[GlobalRetain] WARNING: ${newSet.size} tokens approaching Kite 3000 limit`);
   }
 
-  console.log(`[GlobalRetain] Synced: ${globalRetainedTokens.size} token(s) — ${stockTokens.size} stocks(full) + ${indexTokenSet.size} indexes(quote) (${toAdd.length > 0 ? '+' + toAdd.length : ''}${toRemove.length > 0 ? ' -' + toRemove.length : ''})`);
+  console.log(`[GlobalRetain] Synced: ${globalRetainedTokens.size} token(s) — ${stockTokens.size} watchlist(full) + ${indexTokenSet.size} indexes(quote) + ${LANDING_TOKENS.length} landing(full) (${toAdd.length > 0 ? '+' + toAdd.length : ''}${toRemove.length > 0 ? ' -' + toRemove.length : ''})`);
 }
 
 export function getIO() {

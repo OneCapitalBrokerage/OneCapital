@@ -25,6 +25,8 @@ import {
   restoreClient,
   convertOrderToHold,
   extendOrderValidity,
+  setClientSettlement,
+  adjustHolding,
 } from '../../Controllers/broker/ClientController.js';
 
 const router = express.Router();
@@ -164,6 +166,20 @@ router.post('/clients/:id/orders/:orderId/convert-to-hold', convertOrderToHold);
  * @access  Private (Broker only)
  */
 router.post('/clients/:id/orders/:orderId/extend-validity', extendOrderValidity);
+
+/**
+ * @route   PUT /api/broker/clients/:id/settlement
+ * @desc    Enable or disable settlement participation for a client
+ * @access  Private (Broker only)
+ */
+router.put('/clients/:id/settlement', setClientSettlement);
+
+/**
+ * @route   PUT /api/broker/clients/:id/orders/:orderId/holding-adjustment
+ * @desc    Broker-only silent holdings quantity/lots correction
+ * @access  Private (Broker only)
+ */
+router.put('/clients/:id/orders/:orderId/holding-adjustment', adjustHolding);
 
 /**
  * @route   GET /api/broker/clients-deleted

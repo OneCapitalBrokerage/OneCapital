@@ -48,9 +48,11 @@ const OrderDetailSheet = ({ isOpen, order, tab, onClose, livePrices = {} }) => {
   const isClosed = tab === 'closed';
   const status = String(order.status || order.order_status || '').toUpperCase();
   const product = String(order.product || 'MIS').toUpperCase();
-  const lotSize = Number(order.lot_size || order.lotSize) || 1;
+  const upc = toNumber(order.units_per_contract);
+  const lotSize = upc > 0 ? upc : (Number(order.lot_size || order.lotSize) || 1);
   const rawLots = toNumber(order.lots);
   const lots = rawLots > 0 ? rawLots : (lotSize > 0 ? qty / lotSize : 0);
+  const isMcxOrder = upc > 0;
   const exchange = order.exchange || 'NSE';
 
   const entryBrokerageRaw = readNumber(order.brokerage_breakdown?.entry?.amount);
@@ -160,9 +162,9 @@ const OrderDetailSheet = ({ isOpen, order, tab, onClose, livePrices = {} }) => {
           </div>
 
           <div className="grid grid-cols-2 gap-2">
-            <StatTile label="Qty" value={`${qty}`} />
+            <StatTile label={isMcxOrder ? 'Units' : 'Qty'} value={`${qty}`} />
             <StatTile label="Lots" value={formatCount(lots)} />
-            <StatTile label="Lot Size" value={`${lotSize}`} />
+            <StatTile label={isMcxOrder ? 'Units/Lot' : 'Lot Size'} value={`${lotSize}`} />
             <StatTile label="Avg" value={money(avgPrice)} />
           </div>
 

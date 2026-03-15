@@ -166,7 +166,9 @@ const Logs = () => {
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
-                        <p className="truncate text-sm font-bold text-[#111418]">{activity.user || 'System'}</p>
+                        <p className="truncate text-sm font-bold text-[#111418]">
+                          {activity.userName ? `${activity.userName} (${activity.user})` : activity.user || 'System'}
+                        </p>
                         <p className="shrink-0 text-[10px] text-[#617589]">{formatTimestamp(activity.timestamp)}</p>
                       </div>
                       <p className="mt-0.5 text-xs text-[#617589]">{activity.message || 'No message'}</p>

@@ -49,6 +49,12 @@ const CustomerSchema = new Schema({
   // Trading Permissions
   trading_enabled: { type: Boolean, default: false },
   holdings_exit_allowed: { type: Boolean, default: false },
+
+  // Settlement Participation (broker-controlled)
+  settlement_enabled: { type: Boolean, default: true },
+  settlement_disabled_reason: { type: String },
+  settlement_disabled_at: { type: Date },
+  settlement_disabled_by: { type: Schema.Types.ObjectId, ref: 'Broker' },
   restriction_reason: { type: String },
   segments_allowed: [{
     type: String,

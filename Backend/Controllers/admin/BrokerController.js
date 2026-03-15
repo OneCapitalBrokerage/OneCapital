@@ -236,6 +236,16 @@ const updateBroker = asyncHandler(async (req, res) => {
     'kyc_verified', 'settings'
   ];
 
+  // Email uniqueness guard (only when a new email is being provided)
+  if (updateData.email !== undefined) {
+    const newEmail = updateData.email ? updateData.email.toLowerCase() : undefined;
+    if (newEmail) {
+      const collision = await BrokerModel.findOne({ email: newEmail, _id: { $ne: broker._id } });
+      if (collision) return res.status(400).json({ success: false, message: 'Email already in use by another broker.' });
+    }
+    updateData.email = newEmail;
+  }
+
   allowedFields.forEach(field => {
     if (updateData[field] !== undefined) broker[field] = updateData[field];
   });
@@ -619,6 +629,30 @@ const getBrokerCompliance = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * @desc     Get broker credentials (admin view)
+ * @route    GET /api/admin/brokers/:id/credentials
+ * @access   Private (Admin only)
+ */
+const getBrokerCredentials = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const broker = await findBroker(id, '+password');
+  if (!broker) return res.status(404).json({ success: false, message: 'Broker not found.' });
+
+  console.log(`[Admin] ${req.user?._id} viewed credentials for broker ${broker.broker_id}`);
+
+  res.status(200).json({
+    success: true,
+    credentials: {
+      brokerId: broker.broker_id,
+      email: broker.email || null,
+      phone: broker.phone || null,
+      password: broker.password,
+    },
+  });
+});
+
 export {
   getAllBrokers,
   getBrokerById,
@@ -629,4 +663,5 @@ export {
   blockBroker,
   unblockBroker,
   getBrokerCompliance,
+  getBrokerCredentials,
 };

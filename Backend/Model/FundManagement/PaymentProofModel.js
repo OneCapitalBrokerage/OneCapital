@@ -11,7 +11,7 @@ const PaymentProofSchema = new Schema({
   amount: { type: Number, required: true, min: 1 },
 
   // Request details
-  payment_method: { type: String, enum: ['upi'], default: 'upi' },
+  payment_method: { type: String, enum: ['upi', 'imps', 'neft', 'rtgs', 'bank_transfer'], default: 'upi' },
   payment_reference: { type: String },
   payment_date: { type: Date },
   utr_number: { type: String }, // UTR or transaction ID (optional, user-provided)

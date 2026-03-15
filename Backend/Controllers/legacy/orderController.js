@@ -22,12 +22,13 @@ import {
   getClientPricingConfig,
   inferPricingBucket,
   inferSpreadBucket,
-  getSpreadForBucket,
+  getSpreadConfigForBucket,
   applySpreadToPrice,
   buildEntryBrokerageSnapshot,
   resolveLots,
 } from "../../Utils/ClientPricingEngine.js";
 import { resolveOrderValidity } from "../../services/orderValidity.js";
+import { isMCX } from "../../Utils/mcx/resolver.js";
 import { logFailedOrderAttempt } from "../../Utils/OrderAttemptLogger.js";
 import { getStandardMarketStatus } from "../../Utils/tradingSession.js";
 
@@ -51,8 +52,9 @@ const isCustomerRequest = (req) => {
   return role === 'customer';
 };
 
-const isBrokerImpersonationBypass = (req) =>
-  req.user?.isImpersonation && req.user?.impersonatorRole === 'broker';
+const isPrivilegedImpersonation = (req) =>
+  req.user?.isImpersonation &&
+  ['broker', 'admin'].includes(req.user?.impersonatorRole);
 
 const marketClosedPayload = () => {
   const marketStatus = getStandardMarketStatus();
@@ -213,6 +215,15 @@ const postOrder = asyncHandler(async (req, res) => {
       .lean();
   }
 
+  // MCX NRML rejection: carryforward must use CNC
+  if (isMCX({ exchange: resolvedExchange, segment: resolvedSegment }) && productNorm === 'NRML') {
+    return failAttempt({
+      status: 400,
+      error: 'MCX carryforward must use CNC, not NRML.',
+      code: 'MCX_NRML_NOT_ALLOWED',
+    });
+  }
+
   // Client-level spread application (effective entry price drives margin + P&L basis)
   const pricingConfig = await getClientPricingConfig({
     brokerIdStr: String(broker_id_str),
@@ -230,11 +241,12 @@ const postOrder = asyncHandler(async (req, res) => {
     symbol,
     orderType: orderTypeNorm,
   });
-  const spreadForBucket = getSpreadForBucket(pricingConfig, spreadBucket);
+  const spreadConfig = getSpreadConfigForBucket(pricingConfig, spreadBucket);
   const entryPricing = applySpreadToPrice({
     rawPrice: rawEntryPrice,
     side: sideNorm,
-    spread: spreadForBucket,
+    spread: spreadConfig.value,
+    spreadMode: spreadConfig.mode,
   });
   const effectiveEntryPrice = entryPricing.effectivePrice;
   const resolvedLotSize = Math.max(1, toNumber(lot_size || instrumentDoc?.lot_size || 1));
@@ -284,7 +296,7 @@ const postOrder = asyncHandler(async (req, res) => {
     }
 
     // Options trade ONLY against the option premium limit — not intraday/overnight
-    const limitCheck = checkOptionLimit(fund, productNorm, requiredMargin);
+    const limitCheck = checkOptionLimit(fund, productNorm, requiredMargin, { exchange: resolvedExchange, segment: resolvedSegment });
     if (!limitCheck.allowed) {
       return failAttempt({
         status: 400,
@@ -295,7 +307,7 @@ const postOrder = asyncHandler(async (req, res) => {
 
     // Deduct from option premium only (not intraday/overnight)
     console.log(`[OrderController] Option Order: Symbol=${symbol}, Product=${productNorm}, Margin=${requiredMargin}, Raw=${rawEntryPrice}, Effective=${effectiveEntryPrice}, Bucket=${pricingBucket}`);
-    updateOptionUsage(fund, productNorm, requiredMargin);
+    updateOptionUsage(fund, productNorm, requiredMargin, { exchange: resolvedExchange, segment: resolvedSegment });
   } else {
     // --- NON-OPTION: Use regular intraday/overnight limits ---
     if (isIntraday) {
@@ -431,7 +443,7 @@ const postOrder = asyncHandler(async (req, res) => {
     // --- ROLLBACK FUND (Refund if Fail) ---
     if (isOption) {
       // Options only used option premium — rollback that
-      rollbackOptionUsage(fund, productNorm, requiredMargin);
+      rollbackOptionUsage(fund, productNorm, requiredMargin, { exchange: resolvedExchange, segment: resolvedSegment });
     } else if (isIntraday) {
       fund.intraday.used_limit -= requiredMargin;
     } else {
@@ -616,11 +628,12 @@ const updateOrder = asyncHandler(async (req, res) => {
           symbol: existing.symbol,
           orderType: existing.order_type,
         });
-        const spreadForBucket = getSpreadForBucket(pricingConfig, spreadBucket);
+        const modSpreadConfig = getSpreadConfigForBucket(pricingConfig, spreadBucket);
         const newLotPricing = applySpreadToPrice({
           rawPrice: rawNewLotPrice,
           side: existing.side,
-          spread: spreadForBucket,
+          spread: modSpreadConfig.value,
+          spreadMode: modSpreadConfig.mode,
         });
         const effectiveNewLotPrice = newLotPricing.effectivePrice;
         // Single weighted average: (oldQty × oldEffectivePrice + addedQty × newEffectivePrice) / totalQty
@@ -642,10 +655,12 @@ const updateOrder = asyncHandler(async (req, res) => {
           symbol: existing.symbol,
           orderType: existing.order_type,
         });
+        const editSpreadConfig = getSpreadConfigForBucket(pricingConfig, spreadBucket);
         const updatedEntryPricing = applySpreadToPrice({
           rawPrice: update._requestedPrice,
           side: existing.side,
-          spread: getSpreadForBucket(pricingConfig, spreadBucket),
+          spread: editSpreadConfig.value,
+          spreadMode: editSpreadConfig.mode,
         });
         update.price = updatedEntryPricing.effectivePrice;
         update.raw_entry_price = updatedEntryPricing.rawPrice;
@@ -659,7 +674,7 @@ const updateOrder = asyncHandler(async (req, res) => {
     if (
       isLongTermHoldingOrder &&
       isCustomerRequest(req) &&
-      !isBrokerImpersonationBypass(req)
+      !isPrivilegedImpersonation(req)
     ) {
       const marketStatus = getStandardMarketStatus();
       if (!marketStatus.isOpen) {
@@ -672,7 +687,7 @@ const updateOrder = asyncHandler(async (req, res) => {
       isLongTermProduct(effectiveProduct) &&
       (hasStopLossInput || hasTargetInput) &&
       isCustomerRequest(req) &&
-      !isBrokerImpersonationBypass(req)
+      !isPrivilegedImpersonation(req)
     ) {
       const currentStopLoss = normalizeRiskValue(existing.stop_loss);
       const currentTarget = normalizeRiskValue(existing.target);
@@ -699,13 +714,13 @@ const updateOrder = asyncHandler(async (req, res) => {
       existingStatus !== 'CLOSED' &&
       isLongTermProduct(effectiveProduct) &&
       isCustomerRequest(req) &&
-      !isBrokerImpersonationBypass(req);
+      !isPrivilegedImpersonation(req);
 
     if (isCustomerLongTermExitRequest) {
       const customerDoc = await Customer.findOne({ customer_id: existing.customer_id_str })
         .select('holdings_exit_allowed')
         .lean();
-      if (!customerDoc?.holdings_exit_allowed) {
+      if (!customerDoc?.holdings_exit_allowed && !existing?.exit_allowed) {
         return res.status(403).json({
           success: false,
           message: 'Holdings exit is locked by your broker.',
@@ -782,14 +797,14 @@ const updateOrder = asyncHandler(async (req, res) => {
 
         if (isOptionUpdate) {
           // Options: check and deduct ONLY from option premium limit
-          const limitCheck = checkOptionLimit(fund, currentProduct, marginToDeduct);
+          const limitCheck = checkOptionLimit(fund, currentProduct, marginToDeduct, { exchange: existing.exchange, segment: existing.segment });
           if (!limitCheck.allowed) {
             return res.status(400).json({
               success: false,
               message: limitCheck.message.replace('Required:', 'Additional Required:')
             });
           }
-          updateOptionUsage(fund, currentProduct, marginToDeduct);
+          updateOptionUsage(fund, currentProduct, marginToDeduct, { exchange: existing.exchange, segment: existing.segment });
         } else {
           // Non-options: check and deduct from intraday/overnight
           let availableLimit = 0;

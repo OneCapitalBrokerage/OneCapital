@@ -54,6 +54,8 @@ const Funds = () => {
     intraday: { available: 0, used: 0, remaining: 0 },
     delivery: { available: 0, used: 0, remaining: 0 },
     optionPremium: { percent: 10, base: 0, limit: 0, used: 0, remaining: 0 },
+    commodityDelivery: { available: 0, used: 0, remaining: 0 },
+    commodityOptionPremium: { percent: 10, base: 0, limit: 0, used: 0, remaining: 0 },
   });
   const [summary, setSummary] = useState({
     payInLastWeek: 0,
@@ -76,6 +78,8 @@ const Funds = () => {
       intraday: { available: 0, used: 0, remaining: 0 },
       delivery: { available: 0, used: 0, remaining: 0 },
       optionPremium: { percent: 10, base: 0, limit: 0, used: 0, remaining: 0 },
+      commodityDelivery: { available: 0, used: 0, remaining: 0 },
+      commodityOptionPremium: { percent: 10, base: 0, limit: 0, used: 0, remaining: 0 },
     });
     setSummary(nextState?.summary || {
       payInLastWeek: 0,
@@ -148,6 +152,18 @@ const Funds = () => {
           used: data.trading?.optionPremium?.used ?? 0,
           remaining: data.trading?.optionPremium?.remaining ?? 0,
         },
+        commodityDelivery: {
+          available: data.trading?.commodityDelivery?.available ?? 0,
+          used: data.trading?.commodityDelivery?.used ?? 0,
+          remaining: data.trading?.commodityDelivery?.remaining ?? 0,
+        },
+        commodityOptionPremium: {
+          percent: data.trading?.commodityOptionPremium?.percent ?? 10,
+          base: data.trading?.commodityOptionPremium?.base ?? 0,
+          limit: data.trading?.commodityOptionPremium?.limit ?? 0,
+          used: data.trading?.commodityOptionPremium?.used ?? 0,
+          remaining: data.trading?.commodityOptionPremium?.remaining ?? 0,
+        },
       };
 
       const nextSummary = {
@@ -198,8 +214,14 @@ const Funds = () => {
   }, [fetchFunds]);
 
   // Compute margin utilization
-  const totalMarginAvailable = trading.intraday.available + trading.delivery.available;
-  const totalMarginUsed = trading.intraday.used + trading.delivery.used;
+  const totalMarginAvailable =
+    trading.intraday.available +
+    trading.delivery.available +
+    trading.commodityDelivery.available;
+  const totalMarginUsed =
+    trading.intraday.used +
+    trading.delivery.used +
+    trading.commodityDelivery.used;
   const usedPercent = totalMarginAvailable > 0 ? Math.round((totalMarginUsed / totalMarginAvailable) * 100) : 0;
   const saturdayActive = isSaturdayIst();
   const withdrawableNetCash = Math.max(0, Number(wallet.withdrawableNetCash) || 0);
@@ -482,6 +504,41 @@ const Funds = () => {
                   <p className="text-[9px] text-[#617589] dark:text-[#9cb7aa]">Used: {formatCurrency(trading.optionPremium.used)}</p>
                   <p className="text-[9px] text-[#617589] dark:text-[#9cb7aa]">Limit: {formatCurrency(trading.optionPremium.limit)}</p>
                 </div>
+              </div>
+
+              {/* Commodities Delivery Margin (MCX) */}
+              <div className="p-3">
+                <div className="flex justify-between items-center mb-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-orange-500 text-[16px]">warehouse</span>
+                    <p className="text-[#111418] dark:text-[#e8f3ee] text-[13px] font-medium">Commodities Delivery Margin</p>
+                  </div>
+                  <p className="text-[#111418] dark:text-[#e8f3ee] text-[13px] font-bold">{formatCurrency(trading.commodityDelivery.remaining)}</p>
+                </div>
+                <div className="w-full bg-gray-100 dark:bg-[#16231d] rounded-full h-1.5">
+                  <div
+                    className="bg-orange-500 h-1.5 rounded-full transition-all"
+                    style={{ width: `${trading.commodityDelivery.available > 0 ? Math.min(100, Math.round((trading.commodityDelivery.used / trading.commodityDelivery.available) * 100)) : 0}%` }}
+                  ></div>
+                </div>
+                <div className="flex justify-between mt-1">
+                  <p className="text-[9px] text-[#617589] dark:text-[#9cb7aa]">Used: {formatCurrency(trading.commodityDelivery.used)}</p>
+                  <p className="text-[9px] text-[#617589] dark:text-[#9cb7aa]">Limit: {formatCurrency(trading.commodityDelivery.available)}</p>
+                </div>
+              </div>
+
+              {/* Commodities Option Premium (MCX) */}
+              <div className="p-3">
+                <div className="flex justify-between items-center mb-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-orange-400 text-[16px]">candlestick_chart</span>
+                    <p className="text-[#111418] dark:text-[#e8f3ee] text-[13px] font-medium">Commodities Option Premium</p>
+                  </div>
+                  <p className="text-[#111418] dark:text-[#e8f3ee] text-[13px] font-bold">{formatCurrency(trading.commodityOptionPremium.remaining)}</p>
+                </div>
+                <p className="text-[9px] text-[#617589] dark:text-[#9cb7aa]">
+                  {trading.commodityOptionPremium.percent}% of commodities delivery margin · Limit: {formatCurrency(trading.commodityOptionPremium.limit)} · Used: {formatCurrency(trading.commodityOptionPremium.used)}
+                </p>
               </div>
             </div>
           )}

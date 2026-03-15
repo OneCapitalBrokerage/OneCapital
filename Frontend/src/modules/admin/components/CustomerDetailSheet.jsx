@@ -141,13 +141,28 @@ const CustomerDetailSheet = ({ customerId, onClose }) => {
     try {
       const res = await adminApi.loginAsCustomer(customer._id);
       if (res.token) {
+        // Save admin session for restoration after impersonation
+        const currentToken = localStorage.getItem('accessToken');
+        const currentUser = localStorage.getItem('user');
+        sessionStorage.setItem('adminToken', currentToken || '');
+        sessionStorage.setItem('adminUser', currentUser || '');
+        sessionStorage.setItem('impersonationReturnTo', window.location.pathname + window.location.search);
+
+        // Set impersonation session
         setAuthToken(res.token);
-        setStoredUser({ id: res.customer.id, name: res.customer.name, role: 'customer', isImpersonation: true });
-        navigate('/watchlist');
+        setStoredUser({
+          id: res.customer.id,
+          name: res.customer.name,
+          role: 'customer',
+          isImpersonation: true,
+          impersonatorRole: 'admin',
+        });
+
+        // Hard redirect so the customer app re-initializes from storage
+        window.location.href = '/watchlist';
       }
     } catch (err) {
       setError(err.message || 'Login failed');
-    } finally {
       setActionLoading(false);
     }
   };

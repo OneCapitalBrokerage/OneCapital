@@ -2,6 +2,18 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import brokerApi from '../../api/broker';
 import { useBrokerAuth } from '../../context/BrokerContext';
+import QrCodeFrame from '../../components/shared/QrCodeFrame';
+import BrokerQrEditorModal from './components/BrokerQrEditorModal';
+import {
+  DEFAULT_QR_DISPLAY_SETTINGS,
+  normalizeQrDisplaySettings,
+} from '../../utils/qrDisplay';
+import {
+  BANK_TRANSFER_METHODS,
+  DEFAULT_BANK_TRANSFER_DETAILS,
+  hasBankTransferDetails,
+  normalizeBankTransferDetails,
+} from '../../utils/paymentIntake';
 
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
@@ -33,6 +45,14 @@ const Settings = () => {
   const [editingField, setEditingField] = useState(null);
   const [editValue, setEditValue] = useState('');
   const qrFileRef = useRef(null);
+  const [qrEditorOpen, setQrEditorOpen] = useState(false);
+  const [qrEditorSourceUrl, setQrEditorSourceUrl] = useState('');
+  const [qrEditorSettings, setQrEditorSettings] = useState(DEFAULT_QR_DISPLAY_SETTINGS);
+  const [qrPendingFile, setQrPendingFile] = useState(null);
+  const [qrPendingObjectUrl, setQrPendingObjectUrl] = useState('');
+  const [bankTransferEditing, setBankTransferEditing] = useState(false);
+  const [bankTransferSaving, setBankTransferSaving] = useState(false);
+  const [bankTransferDraft, setBankTransferDraft] = useState(DEFAULT_BANK_TRANSFER_DETAILS);
   const [settlementSaving, setSettlementSaving] = useState(false);
   const [settlementRunning, setSettlementRunning] = useState(false);
   const [settlementNotice, setSettlementNotice] = useState('');
@@ -53,11 +73,14 @@ const Settings = () => {
 
   const [clientInfo, setClientInfo] = useState({
     supportContact: '',
-    upiId: '',
-    qrPhotoUrl: ''
+    qrPhotoUrl: '',
+    qrPhotoPublicId: '',
+    qrSettings: DEFAULT_QR_DISPLAY_SETTINGS,
+    bankTransferDetails: DEFAULT_BANK_TRANSFER_DETAILS,
   });
 
   const settlementWindowOpen = isSettlementWeekendOpen();
+  const hasConfiguredBankTransfer = hasBankTransferDetails(clientInfo.bankTransferDetails);
 
   const formatSettlementDate = (utcDate) =>
     utcDate.toLocaleDateString('en-IN', {
@@ -90,6 +113,7 @@ const Settings = () => {
 
       const p = profileRes.profile || profileRes.broker || profileRes.data || profileRes;
       const settings = settingsRes?.settings || {};
+      const settingsClientInfo = settings?.clientInfo || {};
       const settlement = settings?.settlement || {};
 
       setBroker({
@@ -101,9 +125,11 @@ const Settings = () => {
       });
 
       setClientInfo({
-        supportContact: p.support_contact || p.supportContact || p.phone || '',
-        upiId: p.upi_id || p.upiId || '',
-        qrPhotoUrl: p.payment_qr_url || p.paymentQrUrl || ''
+        supportContact: settingsClientInfo.supportContact || p.support_contact || p.supportContact || p.phone || '',
+        qrPhotoUrl: settingsClientInfo.qrPhotoUrl || p.payment_qr_url || p.paymentQrUrl || '',
+        qrPhotoPublicId: settingsClientInfo.qrPhotoPublicId || p.payment_qr_public_id || p.paymentQrPublicId || '',
+        qrSettings: normalizeQrDisplaySettings(settingsClientInfo.qrSettings || p.payment_qr_settings || p.paymentQrSettings),
+        bankTransferDetails: normalizeBankTransferDetails(settingsClientInfo.bankTransferDetails || p.bank_transfer_details || p.bankTransferDetails),
       });
 
       setSettlementConfig({
@@ -121,16 +147,27 @@ const Settings = () => {
     fetchSettings();
   }, [fetchSettings]);
 
+  useEffect(() => () => {
+    if (qrPendingObjectUrl) {
+      URL.revokeObjectURL(qrPendingObjectUrl);
+    }
+  }, [qrPendingObjectUrl]);
+
   const handleSaveClientInfo = async (field, value) => {
     setSaving(true);
     try {
       const updated = { ...clientInfo, [field]: value };
-      await brokerApi.updateClientInfo({
+      const response = await brokerApi.updateClientInfo({
         supportContact: updated.supportContact,
-        upiId: updated.upiId,
-        qrPhotoUrl: updated.qrPhotoUrl
+        qrPhotoUrl: updated.qrPhotoUrl,
       });
-      setClientInfo(updated);
+      const savedClientInfo = response?.clientInfo || {};
+      setClientInfo((prev) => ({
+        ...updated,
+        qrPhotoPublicId: savedClientInfo.qrPhotoPublicId ?? prev.qrPhotoPublicId,
+        qrSettings: normalizeQrDisplaySettings(savedClientInfo.qrSettings ?? prev.qrSettings),
+        bankTransferDetails: normalizeBankTransferDetails(savedClientInfo.bankTransferDetails ?? prev.bankTransferDetails),
+      }));
       setEditingField(null);
     } catch (err) {
       console.error('Failed to save client info:', err);
@@ -254,39 +291,140 @@ const Settings = () => {
     return { url: data.secure_url, publicId: data.public_id };
   };
 
+  const resetQrEditorState = useCallback(() => {
+    setQrEditorOpen(false);
+    setQrEditorSourceUrl('');
+    setQrEditorSettings(DEFAULT_QR_DISPLAY_SETTINGS);
+    setQrPendingFile(null);
+
+    if (qrPendingObjectUrl) {
+      URL.revokeObjectURL(qrPendingObjectUrl);
+      setQrPendingObjectUrl('');
+    }
+  }, [qrPendingObjectUrl]);
+
+  const openExistingQrEditor = () => {
+    if (!clientInfo.qrPhotoUrl) return;
+    setQrPendingFile(null);
+    setQrEditorSourceUrl(clientInfo.qrPhotoUrl);
+    setQrEditorSettings(normalizeQrDisplaySettings(clientInfo.qrSettings));
+    setQrEditorOpen(true);
+  };
+
   const handleQrFileChange = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
 
+    if (qrPendingObjectUrl) {
+      URL.revokeObjectURL(qrPendingObjectUrl);
+    }
+    const objectUrl = URL.createObjectURL(file);
+    setQrPendingObjectUrl(objectUrl);
+    setQrPendingFile(file);
+    setQrEditorSourceUrl(objectUrl);
+    setQrEditorSettings(DEFAULT_QR_DISPLAY_SETTINGS);
+    setQrEditorOpen(true);
+  };
+
+  const handleSaveQrEditor = async () => {
+    if (!qrEditorSourceUrl) return;
+
     setQrUploading(true);
+    let uploadedAsset = null;
     try {
-      const uploaded = await uploadQrToCloudinary(file);
-      await brokerApi.updateClientInfo({
-        qrPhotoUrl: uploaded.url,
-        qrPhotoPublicId: uploaded.publicId,
-      });
-      setClientInfo((prev) => ({ ...prev, qrPhotoUrl: uploaded.url }));
+      if (qrPendingFile) {
+        uploadedAsset = await uploadQrToCloudinary(qrPendingFile);
+      }
+
+      const payload = {
+        qrSettings: qrEditorSettings,
+      };
+      if (uploadedAsset) {
+        payload.qrPhotoUrl = uploadedAsset.url;
+        payload.qrPhotoPublicId = uploadedAsset.publicId;
+      }
+
+      const response = await brokerApi.updateClientInfo(payload);
+
+      const savedClientInfo = response?.clientInfo || {};
+      setClientInfo((prev) => ({
+        ...prev,
+        qrPhotoUrl: savedClientInfo.qrPhotoUrl ?? uploadedAsset?.url ?? prev.qrPhotoUrl,
+        qrPhotoPublicId: savedClientInfo.qrPhotoPublicId ?? uploadedAsset?.publicId ?? prev.qrPhotoPublicId,
+        qrSettings: normalizeQrDisplaySettings(savedClientInfo.qrSettings ?? qrEditorSettings),
+      }));
+      resetQrEditorState();
     } catch (err) {
-      console.error('Failed to upload QR photo:', err);
+      if (uploadedAsset?.publicId) {
+        try {
+          await brokerApi.discardClientInfoQrUpload(uploadedAsset.publicId);
+        } catch (cleanupErr) {
+          console.error('Failed to discard unsaved QR upload:', cleanupErr);
+        }
+      }
+      console.error('Failed to save QR photo:', err);
     } finally {
       setQrUploading(false);
     }
   };
 
   const handleRemoveQr = async () => {
-    if (!clientInfo.qrPhotoUrl) return;
+    if (!clientInfo.qrPhotoUrl && !clientInfo.qrPhotoPublicId) return;
     setQrRemoving(true);
     try {
       await brokerApi.updateClientInfo({
         qrPhotoUrl: '',
         qrPhotoPublicId: '',
+        qrSettings: DEFAULT_QR_DISPLAY_SETTINGS,
       });
-      setClientInfo((prev) => ({ ...prev, qrPhotoUrl: '' }));
+      resetQrEditorState();
+      setClientInfo((prev) => ({
+        ...prev,
+        qrPhotoUrl: '',
+        qrPhotoPublicId: '',
+        qrSettings: DEFAULT_QR_DISPLAY_SETTINGS,
+      }));
     } catch (err) {
       console.error('Failed to remove QR photo:', err);
     } finally {
       setQrRemoving(false);
+    }
+  };
+
+  const openBankTransferEditor = () => {
+    setBankTransferDraft(normalizeBankTransferDetails(clientInfo.bankTransferDetails));
+    setBankTransferEditing(true);
+  };
+
+  const handleBankTransferDraftChange = (field, value) => {
+    setBankTransferDraft((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
+  };
+
+  const handleSaveBankTransferDetails = async () => {
+    setBankTransferSaving(true);
+    try {
+      const normalized = normalizeBankTransferDetails(bankTransferDraft);
+      const response = await brokerApi.updateClientInfo({
+        bankTransferDetails: normalized,
+      });
+      const savedClientInfo = response?.clientInfo || {};
+      const savedBankTransferDetails = normalizeBankTransferDetails(
+        savedClientInfo.bankTransferDetails ?? normalized
+      );
+      setClientInfo((prev) => ({
+        ...prev,
+        bankTransferDetails: savedBankTransferDetails,
+      }));
+      setBankTransferDraft(savedBankTransferDetails);
+      setBankTransferEditing(false);
+    } catch (err) {
+      console.error('Failed to save bank transfer details:', err);
+    } finally {
+      setBankTransferSaving(false);
     }
   };
 
@@ -410,83 +548,231 @@ const Settings = () => {
               )}
             </div>
 
-            {/* UPI ID */}
-            <div className="px-3 py-3 flex items-center justify-between">
-              {editingField === 'upiId' ? (
-                <div className="flex-1 flex items-center gap-2">
-                  <input
-                    autoFocus
-                    value={editValue}
-                    onChange={(e) => setEditValue(e.target.value)}
-                    className="flex-1 h-9 px-3 rounded-lg bg-[#f6f7f8] text-sm outline-none border border-[#137fec]"
-                    placeholder="example@upi"
-                  />
-                  <button
-                    onClick={() => handleSaveClientInfo('upiId', editValue)}
-                    disabled={saving}
-                    className="h-9 px-3 bg-[#137fec] text-white text-xs font-bold rounded-lg"
-                  >
-                    {saving ? '...' : 'Save'}
-                  </button>
-                  <button onClick={() => setEditingField(null)} className="h-9 px-2 text-[#617589]">
-                    <span className="material-symbols-outlined text-[18px]">close</span>
-                  </button>
-                </div>
-              ) : (
-                <>
-                  <div>
-                    <p className="text-sm font-medium">Fund Transfer UPI ID</p>
-                    <p className="text-[#617589] text-xs">{clientInfo.upiId || 'Not set'}</p>
-                  </div>
-                  <button onClick={() => { setEditingField('upiId'); setEditValue(clientInfo.upiId); }} className="text-[#137fec] opacity-60 hover:opacity-100">
-                    <span className="material-symbols-outlined text-[18px]">edit</span>
-                  </button>
-                </>
-              )}
-            </div>
-
             {/* QR Photo */}
-            <div className="px-3 py-3 flex items-center justify-between gap-3">
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium">Fund Transfer QR Photo</p>
-                <p className="text-[#617589] text-xs">
-                  {clientInfo.qrPhotoUrl ? 'QR photo set' : 'Not set'}
-                </p>
-                {clientInfo.qrPhotoUrl && (
-                  <div className="mt-2 w-16 h-16 rounded-lg overflow-hidden border border-gray-200">
-                    <img src={clientInfo.qrPhotoUrl} alt="Broker QR" className="w-full h-full object-cover" />
-                  </div>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
+            <div className="px-3 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium">Fund Transfer QR Photo</p>
+                  <p className="text-[#617589] text-xs">
+                    {clientInfo.qrPhotoUrl ? 'Official QR uploaded' : 'No QR uploaded yet'}
+                  </p>
+                </div>
                 <input
                   ref={qrFileRef}
                   type="file"
-                  accept="image/*"
+                  accept="image/png,image/jpeg,image/jpg,image/webp"
                   className="hidden"
                   onChange={handleQrFileChange}
                 />
-                <button
-                  onClick={() => qrFileRef.current?.click()}
-                  disabled={qrUploading || qrRemoving}
-                  className="h-9 px-3 bg-[#137fec] text-white text-xs font-bold rounded-lg disabled:opacity-60"
-                >
-                  {qrUploading ? 'Uploading...' : 'Set QR Photo'}
-                </button>
-                {clientInfo.qrPhotoUrl && (
+              </div>
+
+              <div className="mt-3 grid gap-3 md:grid-cols-[160px_minmax(0,1fr)]">
+                <QrCodeFrame
+                  src={clientInfo.qrPhotoUrl}
+                  settings={clientInfo.qrSettings}
+                  alt="Broker QR"
+                  className="w-40 rounded-2xl border border-gray-200 shadow-sm"
+                  emptyLabel="Official QR not uploaded"
+                />
+
+                <div className="flex flex-col gap-2">
+                  <p className="text-[11px] text-[#617589]">
+                    Upload only the official broker QR issued by your payment app or bank. Clients will never see a generated fallback QR.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={() => qrFileRef.current?.click()}
+                      disabled={qrUploading || qrRemoving}
+                      className="h-9 px-3 bg-[#137fec] text-white text-xs font-bold rounded-lg disabled:opacity-60"
+                    >
+                      {qrUploading ? 'Saving QR...' : clientInfo.qrPhotoUrl ? 'Replace QR' : 'Upload QR'}
+                    </button>
+                    {clientInfo.qrPhotoUrl && (
+                      <button
+                        onClick={openExistingQrEditor}
+                        disabled={qrUploading || qrRemoving}
+                        className="h-9 px-3 bg-white border border-gray-200 text-[#111418] text-xs font-bold rounded-lg disabled:opacity-60"
+                      >
+                        Adjust Layout
+                      </button>
+                    )}
+                    {clientInfo.qrPhotoUrl && (
+                      <button
+                        onClick={handleRemoveQr}
+                        disabled={qrUploading || qrRemoving}
+                        className="h-9 px-3 bg-red-50 border border-red-100 text-red-600 text-xs font-bold rounded-lg disabled:opacity-60"
+                      >
+                        {qrRemoving ? 'Removing...' : 'Remove QR'}
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-[#617589]">
+                    Use layout controls to resize, crop, and align the uploaded QR without generating a new QR code.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Bank Transfer */}
+            <div className="px-3 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium">Bank Transfer Details</p>
+                  <p className="text-[#617589] text-xs">
+                    {hasConfiguredBankTransfer
+                      ? 'RTGS / NEFT / IMPS details visible to clients'
+                      : 'Bank transfer details not configured'}
+                  </p>
+                </div>
+                {!bankTransferEditing && (
                   <button
-                    onClick={handleRemoveQr}
-                    disabled={qrUploading || qrRemoving}
-                    className="h-9 px-3 bg-red-50 border border-red-100 text-red-600 text-xs font-bold rounded-lg disabled:opacity-60"
+                    onClick={openBankTransferEditor}
+                    className="h-9 px-3 bg-white border border-gray-200 text-[#111418] text-xs font-bold rounded-lg"
                   >
-                    {qrRemoving ? 'Removing...' : 'Remove QR'}
+                    {hasConfiguredBankTransfer ? 'Edit' : 'Add'}
                   </button>
+                )}
+              </div>
+
+              <div className="mt-3 rounded-2xl border border-gray-200 bg-[#fafbfc] p-3">
+                <div className="flex flex-wrap gap-2">
+                  {BANK_TRANSFER_METHODS.map((method) => (
+                    <span
+                      key={method}
+                      className="rounded-full bg-[#eaf4ff] px-2.5 py-1 text-[11px] font-semibold text-[#137fec]"
+                    >
+                      {method.toUpperCase()}
+                    </span>
+                  ))}
+                </div>
+
+                {bankTransferEditing ? (
+                  <div className="mt-4 space-y-3">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-[#617589]">
+                          Bank Name
+                        </label>
+                        <input
+                          value={bankTransferDraft.bankName}
+                          onChange={(event) => handleBankTransferDraftChange('bankName', event.target.value)}
+                          placeholder="Optional"
+                          className="h-10 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm text-[#111418] outline-none focus:border-[#137fec]"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-[#617589]">
+                          Account Holder
+                        </label>
+                        <input
+                          value={bankTransferDraft.accountHolderName}
+                          onChange={(event) => handleBankTransferDraftChange('accountHolderName', event.target.value)}
+                          placeholder="Optional"
+                          className="h-10 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm text-[#111418] outline-none focus:border-[#137fec]"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_190px]">
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-[#617589]">
+                          Account Number
+                        </label>
+                        <input
+                          value={bankTransferDraft.accountNumber}
+                          onChange={(event) => handleBankTransferDraftChange('accountNumber', event.target.value.replace(/\s+/g, ''))}
+                          placeholder="Required for bank transfer"
+                          className="h-10 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm text-[#111418] outline-none focus:border-[#137fec]"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-[#617589]">
+                          IFSC Code
+                        </label>
+                        <input
+                          value={bankTransferDraft.ifscCode}
+                          onChange={(event) => handleBankTransferDraftChange('ifscCode', event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 11))}
+                          placeholder="Required"
+                          className="h-10 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm uppercase text-[#111418] outline-none focus:border-[#137fec]"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-[#617589]">
+                        Account Type
+                      </label>
+                      <div className="flex gap-2">
+                        {['current', 'savings'].map((type) => (
+                          <button
+                            key={type}
+                            onClick={() => handleBankTransferDraftChange('accountType', type)}
+                            className={`h-10 flex-1 rounded-xl border text-sm font-semibold transition-colors ${
+                              bankTransferDraft.accountType === type
+                                ? 'border-[#137fec] bg-[#137fec] text-white'
+                                : 'border-gray-200 bg-white text-[#111418]'
+                            }`}
+                          >
+                            {type.charAt(0).toUpperCase() + type.slice(1)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <button
+                        onClick={() => setBankTransferEditing(false)}
+                        disabled={bankTransferSaving}
+                        className="h-10 px-4 rounded-xl border border-gray-200 bg-white text-sm font-semibold text-[#111418] disabled:opacity-60"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleSaveBankTransferDetails}
+                        disabled={bankTransferSaving}
+                        className="h-10 px-4 rounded-xl bg-[#137fec] text-sm font-semibold text-white disabled:opacity-60"
+                      >
+                        {bankTransferSaving ? 'Saving...' : 'Save Bank Details'}
+                      </button>
+                    </div>
+                  </div>
+                ) : hasConfiguredBankTransfer ? (
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-xl bg-white px-3 py-2.5">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-[#617589]">Account Number</p>
+                      <p className="mt-1 font-mono text-sm font-semibold text-[#111418] break-all">
+                        {clientInfo.bankTransferDetails.accountNumber}
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-white px-3 py-2.5">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-[#617589]">IFSC Code</p>
+                      <p className="mt-1 font-mono text-sm font-semibold text-[#111418]">
+                        {clientInfo.bankTransferDetails.ifscCode}
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-white px-3 py-2.5">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-[#617589]">Bank Name</p>
+                      <p className="mt-1 text-sm font-semibold text-[#111418]">
+                        {clientInfo.bankTransferDetails.bankName || 'Not set'}
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-white px-3 py-2.5">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-[#617589]">Account Holder</p>
+                      <p className="mt-1 text-sm font-semibold text-[#111418]">
+                        {clientInfo.bankTransferDetails.accountHolderName || 'Not set'}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="mt-4 text-[11px] text-[#617589]">
+                    Add account number and IFSC code to display professional RTGS, NEFT, and IMPS transfer instructions to clients.
+                  </p>
                 )}
               </div>
             </div>
           </div>
           <p className="text-[10px] text-[#617589] px-2">
-            Information entered here will be visible to your clients for fund transfers.
+            Upload a UPI QR code so clients can scan and pay instantly. If bank transfer details are configured, clients will also see RTGS, NEFT, and IMPS account instructions.
           </p>
         </div>
 
@@ -587,6 +873,17 @@ const Settings = () => {
         </div>
       </div>
     </div>
+
+    <BrokerQrEditorModal
+      open={qrEditorOpen}
+      sourceUrl={qrEditorSourceUrl}
+      settings={qrEditorSettings}
+      saving={qrUploading}
+      onChange={setQrEditorSettings}
+      onClose={resetQrEditorState}
+      onReset={() => setQrEditorSettings(DEFAULT_QR_DISPLAY_SETTINGS)}
+      onSave={handleSaveQrEditor}
+    />
 
     {/* Settlement Warning Modal */}
     {settlementWarning && (

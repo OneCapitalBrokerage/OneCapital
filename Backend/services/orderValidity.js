@@ -9,6 +9,8 @@
 const EQUITY_VALIDITY_DAYS = 7;
 const MARKET_CLOSE_HOUR = 15;
 const MARKET_CLOSE_MINUTE = 15;  // Market closes at 3:15 PM IST sharp
+const MCX_CLOSE_HOUR = 23;
+const MCX_CLOSE_MINUTE = 0;     // MCX business cutoff at 11:00 PM IST
 const EXTENSION_WINDOW_HOURS = 24;
 const IST_OFFSET_MINUTES = 330; // IST = UTC+5:30 = 330 minutes
 
@@ -118,13 +120,18 @@ export function computeEquity7DayExpiry(placedAt) {
 export function resolveOrderValidity({ product, exchange, segment, symbol, instrumentExpiry, placedAt }) {
   const productUp = String(product || '').toUpperCase();
   const now = placedAt ? new Date(placedAt) : new Date();
+  const ex = String(exchange || '').toUpperCase();
+  const seg = String(segment || '').toUpperCase();
+  const isMcx = ex === 'MCX' || ex.includes('MCX') || seg.includes('MCX');
+  const closeHour = isMcx ? MCX_CLOSE_HOUR : MARKET_CLOSE_HOUR;
+  const closeMinute = isMcx ? MCX_CLOSE_MINUTE : MARKET_CLOSE_MINUTE;
 
   // MIS = intraday, expires at market close same day
   if (productUp === 'MIS') {
     return {
       mode: 'INTRADAY_DAY',
       startsAt: now,
-      expiresAt: setISTTime(now, MARKET_CLOSE_HOUR, MARKET_CLOSE_MINUTE),
+      expiresAt: setISTTime(now, closeHour, closeMinute),
     };
   }
 
@@ -135,7 +142,7 @@ export function resolveOrderValidity({ product, exchange, segment, symbol, instr
       return {
         mode: 'INSTRUMENT_EXPIRY',
         startsAt: now,
-        expiresAt: setISTTime(expDate, MARKET_CLOSE_HOUR, MARKET_CLOSE_MINUTE),
+        expiresAt: setISTTime(expDate, closeHour, closeMinute),
       };
     }
   }

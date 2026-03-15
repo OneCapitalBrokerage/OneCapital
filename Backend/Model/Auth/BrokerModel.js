@@ -9,8 +9,8 @@ const BrokerSchema = new Schema({
   // Profile
   name: { type: String, required: true }, // Company/Firm name
   owner_name: { type: String, required: true }, // Owner's name
-  email: { type: String, required: true, unique: true },
-  phone: { type: String, required: true },
+  email: { type: String, unique: true, sparse: true },
+  phone: { type: String },
   avatar: { type: String }, // Cloudinary URL
   
   // Business Details
@@ -24,6 +24,19 @@ const BrokerSchema = new Schema({
   upi_id: { type: String }, // For fund transfers
   payment_qr_url: { type: String },
   payment_qr_public_id: { type: String },
+  payment_qr_settings: {
+    scale: { type: Number, default: 1 },
+    offset_x: { type: Number, default: 0 },
+    offset_y: { type: Number, default: 0 },
+    padding: { type: Number, default: 8 },
+  },
+  bank_transfer_details: {
+    bank_name: { type: String },
+    account_holder_name: { type: String },
+    account_number: { type: String },
+    ifsc_code: { type: String },
+    account_type: { type: String, enum: ['savings', 'current'], default: 'current' },
+  },
   
   // Address
   address: {

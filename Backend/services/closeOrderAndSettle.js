@@ -20,7 +20,7 @@ import {
   getClientPricingConfig,
   inferPricingBucket,
   inferSpreadBucket,
-  getSpreadForBucket,
+  getSpreadConfigForBucket,
   applySpreadToPrice,
   calculateBrokerageForLeg,
   getClosingSide,
@@ -101,7 +101,8 @@ export async function closeOrderAndSettle(orderId, { exitPrice, exitReason = 'ma
     }
 
     const qty = toNumber(order.quantity);
-    const lotSize = Math.max(1, toNumber(order.lot_size) || 1);
+    const upc = toNumber(order.units_per_contract);
+    const lotSize = upc > 0 ? upc : Math.max(1, toNumber(order.lot_size) || 1);
     const lots = toNumber(order.lots) > 0 ? toNumber(order.lots) : Math.max(1, qty / lotSize);
     const originalMarginBlocked = toNumber(order.margin_blocked);
 
@@ -133,11 +134,12 @@ export async function closeOrderAndSettle(orderId, { exitPrice, exitReason = 'ma
     const fallbackRawExit = toNumber(order.raw_entry_price || order.effective_entry_price || order.price);
     const safeRawExitPrice = rawExitInput > 0 ? rawExitInput : fallbackRawExit;
     const closingSide = getClosingSide(order.side);
-    const spreadForBucket = getSpreadForBucket(pricingConfig, spreadBucket);
+    const exitSpreadConfig = getSpreadConfigForBucket(pricingConfig, spreadBucket);
     const exitPricing = applySpreadToPrice({
       rawPrice: safeRawExitPrice,
       side: closingSide,
-      spread: spreadForBucket,
+      spread: exitSpreadConfig.value,
+      spreadMode: exitSpreadConfig.mode,
     });
     const effectiveExitPrice = exitPricing.effectivePrice;
 
@@ -214,7 +216,7 @@ export async function closeOrderAndSettle(orderId, { exitPrice, exitReason = 'ma
 
     if (marginToRelease > 0 && !order.margin_released_at) {
       if (isOption) {
-        rollbackOptionUsage(fund, order.product, marginToRelease);
+        rollbackOptionUsage(fund, order.product, marginToRelease, { exchange: order.exchange, segment: order.segment });
       } else {
         // Immediate release — per-order lifecycle
         releaseMarginOnClose(fund, order, {

@@ -33,6 +33,7 @@ const formatCurrency = (value) =>
 const PENDING_WITHDRAWAL_STATUSES = ['pending', 'processing'];
 const APPROVED_WITHDRAWAL_STATUSES = ['approved', 'completed'];
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const SUPPORTED_PAYMENT_METHODS = ['upi', 'imps', 'neft', 'rtgs', 'bank_transfer'];
 
 const getIstNow = () => new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
 
@@ -77,6 +78,7 @@ const mapPaymentRequest = (request) => ({
   amount: toNumber(request.amount),
   paymentMethod: request.payment_method || 'upi',
   paymentReference: request.payment_reference || '',
+  utrNumber: request.utr_number || '',
   status: request.status,
   proofUrl: request.proof_url || '',
   proofType: request.proof_type || '',
@@ -214,6 +216,13 @@ const getBrokerPaymentInfoById = async (brokerId) => {
   if (!brokerId) return null;
   const broker = await BrokerModel.findById(brokerId);
   if (!broker) return null;
+  const bankTransferDetails = {
+    bankName: broker.bank_transfer_details?.bank_name || '',
+    accountHolderName: broker.bank_transfer_details?.account_holder_name || '',
+    accountNumber: broker.bank_transfer_details?.account_number || '',
+    ifscCode: broker.bank_transfer_details?.ifsc_code || '',
+    accountType: broker.bank_transfer_details?.account_type || 'current',
+  };
   return {
     upiId: broker.upi_id || '',
     supportContact: broker.support_contact || '',
@@ -222,6 +231,17 @@ const getBrokerPaymentInfoById = async (brokerId) => {
     brokerId: broker.broker_id || '',
     brokerName: broker.name || '',
     qrPhotoUrl: broker.payment_qr_url || '',
+    qrSettings: {
+      scale: broker.payment_qr_settings?.scale ?? 1,
+      offsetX: broker.payment_qr_settings?.offset_x ?? 0,
+      offsetY: broker.payment_qr_settings?.offset_y ?? 0,
+      padding: broker.payment_qr_settings?.padding ?? 8,
+    },
+    bankTransferDetails,
+    availablePaymentMethods: [
+      ...(broker.payment_qr_url ? ['upi'] : []),
+      ...((bankTransferDetails.accountNumber && bankTransferDetails.ifscCode) ? ['bank_transfer'] : []),
+    ],
   };
 };
 
@@ -265,6 +285,8 @@ const getBalance = asyncHandler(async (req, res) => {
         intraday: { available: 0, used: 0, remaining: 0 },
         delivery: { available: 0, used: 0, remaining: 0 },
         optionPremium: { percent: 10, base: 0, limit: 0, used: 0, remaining: 0 },
+        commodityDelivery: { available: 0, used: 0, remaining: 0 },
+        commodityOptionPremium: { percent: 10, base: 0, limit: 0, used: 0, remaining: 0 },
       },
       summary: {
         payInLastWeek: 0,
@@ -310,6 +332,12 @@ const getBalance = asyncHandler(async (req, res) => {
   const optionLimit = Math.round((optionPercent / 100) * optionOpeningBalance * 100) / 100;
   const optionUsed = optionIntradayUsed + optionDeliveryUsed;
   const optionRemaining = Math.max(0, optionLimit - optionUsed);
+  const commodityDeliveryAvailable = toNumber(fund.commodity_delivery?.available_limit);
+  const commodityDeliveryUsed = toNumber(fund.commodity_delivery?.used_limit);
+  const commodityOptionPercent = toNumber(fund.commodity_option?.limit_percentage) || 10;
+  const commodityOptionUsed = toNumber(fund.commodity_option?.used);
+  const commodityOptionLimit = Math.round((commodityDeliveryAvailable * (commodityOptionPercent / 100)) * 100) / 100;
+  const commodityOptionRemaining = Math.max(0, commodityOptionLimit - commodityOptionUsed);
 
   // Calculate pay-in summary from approved/completed withdrawals in the current
   // Saturday-reset IST week (Saturday 00:00 IST -> next Saturday 00:00 IST).
@@ -410,6 +438,18 @@ const getBalance = asyncHandler(async (req, res) => {
         usedIntraday: optionIntradayUsed,
         usedDelivery: optionDeliveryUsed,
       },
+      commodityDelivery: {
+        available: commodityDeliveryAvailable,
+        used: commodityDeliveryUsed,
+        remaining: Math.max(0, commodityDeliveryAvailable - commodityDeliveryUsed),
+      },
+      commodityOptionPremium: {
+        percent: commodityOptionPercent,
+        base: commodityDeliveryAvailable,
+        limit: commodityOptionLimit,
+        used: commodityOptionUsed,
+        remaining: commodityOptionRemaining,
+      },
     },
     summary: {
       payInLastWeek,
@@ -436,7 +476,7 @@ const getBalance = asyncHandler(async (req, res) => {
 });
 
 /**
- * @desc     Request to add funds (UPI only)
+ * @desc     Request to add funds (offline transfer request)
  * @route    POST /api/customer/funds/add
  * @access   Private (Customer only)
  */
@@ -445,6 +485,7 @@ const requestAddFunds = asyncHandler(async (req, res) => {
   const brokerIdStr = req.user.stringBrokerId;
   const amount = toNumber(req.body?.amount);
   const utrNumber = typeof req.body?.utr_number === 'string' ? req.body.utr_number.trim() : '';
+  const paymentMethod = String(req.body?.payment_method || 'upi').trim().toLowerCase();
 
   if (amount <= 0) {
     return res.status(400).json({
@@ -453,11 +494,46 @@ const requestAddFunds = asyncHandler(async (req, res) => {
     });
   }
 
+  if (!SUPPORTED_PAYMENT_METHODS.includes(paymentMethod)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Unsupported payment method.',
+    });
+  }
+
+  const paymentInfo = await getBrokerPaymentInfoById(req.user.mongoBrokerId);
+
+  if (!paymentInfo) {
+    return res.status(404).json({
+      success: false,
+      message: 'Broker payment details are not available.',
+    });
+  }
+
+  const hasUpiMethod = Boolean(paymentInfo.qrPhotoUrl);
+  const hasBankTransferMethod = Boolean(
+    paymentInfo.bankTransferDetails?.accountNumber && paymentInfo.bankTransferDetails?.ifscCode
+  );
+
+  if (paymentMethod === 'upi' && !hasUpiMethod) {
+    return res.status(400).json({
+      success: false,
+      message: 'Broker UPI payment details are not available.',
+    });
+  }
+
+  if (paymentMethod !== 'upi' && !hasBankTransferMethod) {
+    return res.status(400).json({
+      success: false,
+      message: 'Broker bank transfer details are not available.',
+    });
+  }
+
   const paymentRequest = await createPaymentRequest(
     customerIdStr,
     brokerIdStr,
     amount,
-    'upi',
+    paymentMethod,
     '',
     '', // proofUrl deprecated
     {
@@ -467,8 +543,6 @@ const requestAddFunds = asyncHandler(async (req, res) => {
       utrNumber, // Pass optional UTR/transaction ID
     }
   );
-
-  const paymentInfo = await getBrokerPaymentInfoById(req.user.mongoBrokerId);
 
   res.status(201).json({
     success: true,

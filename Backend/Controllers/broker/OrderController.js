@@ -5,7 +5,8 @@ import asyncHandler from 'express-async-handler';
 import OrderModel from '../../Model/Trading/OrdersModel.js';
 import CustomerModel from '../../Model/Auth/CustomerModel.js';
 import FundModel from '../../Model/FundManagement/FundModel.js';
-import { refundMarginImmediate, getMarginBucket } from '../../services/marginLifecycle.js';
+import { refundMarginImmediate, reserveMargin, getMarginBucket } from '../../services/marginLifecycle.js';
+import { resolveOrderValidity } from '../../services/orderValidity.js';
 
 /**
  * @desc     Get pending CNC orders for approval
@@ -122,6 +123,49 @@ const approveCncOrder = asyncHandler(async (req, res) => {
     });
   }
 
+  // Reserve margin in the correct bucket (commodity_delivery for MCX CNC, delivery for equity CNC)
+  const marginToReserve = Number(order.margin_blocked) || 0;
+  if (marginToReserve > 0) {
+    const fund = await FundModel.findOne({
+      broker_id_str: order.broker_id_str,
+      customer_id_str: order.customer_id_str,
+    });
+
+    if (!fund) {
+      return res.status(400).json({
+        success: false,
+        message: 'Fund record not found for this client.',
+      });
+    }
+
+    const bucket = getMarginBucket(order.product, { exchange: order.exchange, segment: order.segment });
+    // Only reserve from delivery / commodity_delivery — MIS (intraday) is reserved at placement
+    if (bucket !== 'intraday') {
+      const result = reserveMargin(fund, bucket, marginToReserve);
+      if (!result.ok) {
+        return res.status(400).json({
+          success: false,
+          message: result.error || 'Insufficient margin to approve this order.',
+        });
+      }
+      await fund.save();
+    }
+  }
+
+  // Set order validity using instrument expiry if available
+  const instrumentExpiry = order.meta?.selectedStock?.expiry || null;
+  const validity = resolveOrderValidity({
+    product: order.product,
+    exchange: order.exchange,
+    segment: order.segment,
+    symbol: order.symbol,
+    instrumentExpiry,
+    placedAt: new Date(),
+  });
+  order.validity_mode = validity.mode;
+  order.validity_started_at = validity.startsAt;
+  order.validity_expires_at = validity.expiresAt;
+
   order.approval_status = 'approved';
   order.approved_by = brokerId;
   order.approved_at = new Date();
@@ -198,7 +242,7 @@ const rejectCncOrder = asyncHandler(async (req, res) => {
     });
 
     if (fund) {
-      const bucket = getMarginBucket(order.product);
+      const bucket = getMarginBucket(order.product, { exchange: order.exchange, segment: order.segment });
       refundMarginImmediate(fund, bucket, marginBlocked, {
         reason: `CNC rejection: ${reason}`,
         orderId: String(order._id),

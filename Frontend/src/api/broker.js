@@ -84,6 +84,11 @@ const brokerApi = {
     return response.data;
   },
 
+  setClientSettlement: async (clientId, enabled, reason) => {
+    const response = await api.put(`/broker/clients/${clientId}/settlement`, { enabled, reason });
+    return response.data;
+  },
+
   toggleOrderExitAllowed: async (clientId, orderId, allowed) => {
     const response = await api.put(`/broker/clients/${clientId}/orders/${orderId}/exit-toggle`, { allowed });
     return response.data;
@@ -169,6 +174,11 @@ const brokerApi = {
 
   extendOrderValidity: async (clientId, orderId, payload = {}) => {
     const response = await api.post(`/broker/clients/${clientId}/orders/${orderId}/extend-validity`, payload);
+    return response.data;
+  },
+
+  adjustHolding: async (clientId, orderId, payload) => {
+    const response = await api.put(`/broker/clients/${clientId}/orders/${orderId}/holding-adjustment`, payload);
     return response.data;
   },
 
@@ -353,6 +363,11 @@ const brokerApi = {
 
   getClientInfoUploadSignature: async () => {
     const response = await api.get('/broker/settings/client-info/upload-signature');
+    return response.data;
+  },
+
+  discardClientInfoQrUpload: async (publicId) => {
+    const response = await api.post('/broker/settings/client-info/qr/discard', { publicId });
     return response.data;
   },
 

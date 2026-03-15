@@ -1,6 +1,10 @@
+import { isMcxSegment } from './mcxSpecs';
+
 const IST_TIME_ZONE = 'Asia/Kolkata';
-const MARKET_OPEN_TOTAL_MINUTES = 9 * 60 + 15;
-const MARKET_CLOSE_TOTAL_MINUTES = 15 * 60 + 15;
+const MARKET_OPEN_TOTAL_MINUTES = 9 * 60 + 15;   // 09:15
+const MARKET_CLOSE_TOTAL_MINUTES = 15 * 60 + 15;  // 15:15
+const MCX_MARKET_OPEN_TOTAL_MINUTES = 9 * 60 + 15; // 09:15
+const MCX_MARKET_CLOSE_TOTAL_MINUTES = 23 * 60;   // 23:00
 
 // Sync this list with Backend/cron/marketCalendar.js.
 const MARKET_HOLIDAYS = new Set([
@@ -83,3 +87,39 @@ export const getMarketStatusIST = (value = new Date()) => {
 export const isMarketOpenIST = (value = new Date()) =>
   getMarketStatusIST(value).isOpen;
 
+export const getMarketStatusForInstrument = ({ exchange, segment, now } = {}) => {
+  const value = now || new Date();
+  const isMcx = isMcxSegment(exchange, segment);
+  const openMin = isMcx ? MCX_MARKET_OPEN_TOTAL_MINUTES : MARKET_OPEN_TOTAL_MINUTES;
+  const closeMin = isMcx ? MCX_MARKET_CLOSE_TOTAL_MINUTES : MARKET_CLOSE_TOTAL_MINUTES;
+
+  const dateNow = value instanceof Date ? value : new Date(value);
+  const istNow = toIstPseudoDate(dateNow);
+  const dayOfWeek = istNow.getDay();
+  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+  const dateKey = getIstDateString(dateNow);
+  const isHoliday = MARKET_HOLIDAYS.has(dateKey);
+  const isTradingDay = !isWeekend && !isHoliday;
+  const totalMinutes = toMinutes(istNow);
+  const isWithinHours = totalMinutes >= openMin && totalMinutes <= closeMin;
+  const isOpen = isTradingDay && isWithinHours;
+
+  let reason = 'open';
+  if (!isTradingDay) reason = isHoliday ? 'holiday' : 'weekend';
+  else if (!isWithinHours) reason = 'outside_hours';
+
+  return {
+    isOpen,
+    isTradingDay,
+    isWeekend,
+    isHoliday,
+    isWithinHours,
+    reason,
+    marketOpen: '09:15',
+    marketClose: isMcx ? '23:00' : '15:15',
+    sessionType: isMcx ? 'MCX' : 'STANDARD',
+    timezone: IST_TIME_ZONE,
+    dateKey,
+    istNow,
+  };
+};

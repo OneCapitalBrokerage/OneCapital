@@ -2,6 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import TopHeader from '../../components/shared/TopHeader';
 import customerApi from '../../api/customer';
+import QrCodeFrame from '../../components/shared/QrCodeFrame';
+import {
+  PAYMENT_METHOD_LABELS,
+  hasBankTransferDetails,
+} from '../../utils/paymentIntake';
 
 const ADD_STATUS_META = {
   pending_proof: { label: 'Pending', className: 'bg-amber-50 dark:bg-amber-900/20 text-amber-700' }, // Legacy status
@@ -79,13 +84,7 @@ const Payments = () => {
     () => addFundRequests.filter((r) => r.status === 'pending_proof' || r.status === 'pending').length,
     [addFundRequests]
   );
-
-  const upiQrUrl = useMemo(() => {
-    if (paymentInfo?.qrPhotoUrl) return paymentInfo.qrPhotoUrl;
-    if (!paymentInfo?.upiId) return '';
-    const payload = `upi://pay?pa=${paymentInfo.upiId}`;
-    return `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(payload)}`;
-  }, [paymentInfo]);
+  const bankTransferReady = hasBankTransferDetails(paymentInfo?.bankTransferDetails);
 
   return (
     <div className="min-h-screen bg-[#f2f4f6] dark:bg-[#050806] dark:text-[#e8f3ee]">
@@ -98,16 +97,30 @@ const Payments = () => {
           <div className="mt-2.5 space-y-1 text-[11px] text-[#617589] dark:text-[#9cb7aa]">
             <p>Broker: {paymentInfo?.brokerName || '-'}</p>
             <p>Contact: {paymentInfo?.supportContact || '-'}</p>
-            <p>UPI ID: {paymentInfo?.upiId || '-'}</p>
           </div>
-          {(paymentInfo?.qrPhotoUrl || paymentInfo?.upiId) && (
-            <button
-              onClick={() => setShowQr(true)}
-              className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-[#137fec]/10 px-2.5 py-1.5 text-[11px] font-semibold text-[#137fec]"
-            >
-              <span className="material-symbols-outlined text-[16px]">qr_code_2</span>
-              Show QR
-            </button>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {paymentInfo?.qrPhotoUrl && (
+              <button
+                onClick={() => setShowQr(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-[#137fec]/10 px-2.5 py-1.5 text-[11px] font-semibold text-[#137fec]"
+              >
+                <span className="material-symbols-outlined text-[16px]">qr_code_2</span>
+                Show QR
+              </button>
+            )}
+            {bankTransferReady && ['RTGS', 'NEFT', 'IMPS'].map((label) => (
+              <span key={label} className="rounded-lg bg-[#eaf4ff] px-2.5 py-1.5 text-[11px] font-semibold text-[#137fec]">
+                {label}
+              </span>
+            ))}
+          </div>
+          {bankTransferReady && (
+            <div className="mt-3 rounded-xl border border-gray-200 dark:border-[#22352d] bg-[#fafafa] dark:bg-[#0b120f] px-3 py-3 text-[11px] text-[#617589] dark:text-[#9cb7aa] space-y-1">
+              <p className="font-semibold text-[#111418] dark:text-[#e8f3ee]">Broker Bank Transfer</p>
+              <p className="font-mono break-all">{paymentInfo?.bankTransferDetails?.accountNumber}</p>
+              <p className="font-mono">{paymentInfo?.bankTransferDetails?.ifscCode}</p>
+              {paymentInfo?.bankTransferDetails?.bankName && <p>{paymentInfo.bankTransferDetails.bankName}</p>}
+            </div>
           )}
         </div>
 
@@ -166,6 +179,9 @@ const Payments = () => {
                         <p className="text-[#111418] dark:text-[#e8f3ee] text-base font-bold">{formatCurrency(request.amount)}</p>
                         <p className="text-[11px] text-[#617589] dark:text-[#9cb7aa] mt-0.5">
                           {formatDateTime(request.createdAt)}
+                        </p>
+                        <p className="text-[10px] text-[#137fec] dark:text-[#8cc1ff] mt-1 font-semibold">
+                          {PAYMENT_METHOD_LABELS[String(request.paymentMethod || 'upi').toLowerCase()] || 'UPI'}
                         </p>
                         <p className="text-[10px] text-[#617589] dark:text-[#9cb7aa] mt-1 font-mono">{request.id}</p>
                         {request.utrNumber && (
@@ -246,13 +262,19 @@ const Payments = () => {
                 <span className="material-symbols-outlined text-[20px]">close</span>
               </button>
             </div>
-            {upiQrUrl ? (
+            {paymentInfo?.qrPhotoUrl ? (
               <div className="rounded-xl border border-gray-200 dark:border-[#22352d] bg-[#f6f7f8] dark:bg-[#16231d] p-3">
-                <img src={upiQrUrl} alt="Broker UPI QR" className="w-full h-auto rounded-lg" />
-                <p className="text-[11px] text-[#617589] dark:text-[#9cb7aa] mt-2 text-center">{paymentInfo?.upiId}</p>
+                <QrCodeFrame
+                  src={paymentInfo.qrPhotoUrl}
+                  settings={paymentInfo?.qrSettings}
+                  alt="Broker UPI QR"
+                  className="w-full rounded-lg"
+                />
               </div>
             ) : (
-              <p className="text-sm text-[#617589] dark:text-[#9cb7aa]">UPI ID not available.</p>
+              <p className="text-sm text-[#617589] dark:text-[#9cb7aa]">
+                Broker QR not uploaded. Contact support for payment instructions.
+              </p>
             )}
           </div>
         </div>

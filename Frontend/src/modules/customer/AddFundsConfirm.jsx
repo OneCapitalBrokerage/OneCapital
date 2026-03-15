@@ -2,6 +2,12 @@ import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import TopHeader from '../../components/shared/TopHeader';
 import customerApi from '../../api/customer';
+import QrCodeFrame from '../../components/shared/QrCodeFrame';
+import {
+  PAYMENT_METHOD_LABELS,
+  hasBankTransferDetails,
+  hasUpiPaymentDetails,
+} from '../../utils/paymentIntake';
 
 const formatCurrency = (value) => {
   const amount = Number(value);
@@ -20,10 +26,9 @@ const AddFundsConfirm = () => {
 
   const request = initialState.request || {};
   const amount = initialState.amount || request.amount || 0;
-  const fallbackQrUrl = paymentInfo?.upiId
-    ? `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(`upi://pay?pa=${paymentInfo.upiId}`)}`
-    : '';
-  const displayQrUrl = paymentInfo?.qrPhotoUrl || fallbackQrUrl;
+  const selectedMethod = String(request.paymentMethod || 'upi').toLowerCase();
+  const showUpiSection = hasUpiPaymentDetails(paymentInfo);
+  const showBankTransferSection = hasBankTransferDetails(paymentInfo?.bankTransferDetails);
 
   useEffect(() => {
     if (paymentInfo) return;
@@ -65,10 +70,18 @@ const AddFundsConfirm = () => {
             <p className="text-[11px] text-[#617589] dark:text-[#9cb7aa] mt-2">Request ID: <span className="font-mono">{request.id}</span></p>
           )}
           <p className="text-[11px] text-[#617589] dark:text-[#9cb7aa] mt-1">Status: {request.status || 'pending'}</p>
+          <p className="text-[11px] text-[#617589] dark:text-[#9cb7aa] mt-1">
+            Recorded Method: <span className="font-semibold text-[#111418] dark:text-[#e8f3ee]">{PAYMENT_METHOD_LABELS[selectedMethod] || 'UPI'}</span>
+          </p>
         </div>
 
         <div className="bg-white dark:bg-[#111b17] rounded-xl border border-gray-200 dark:border-[#22352d] p-4 shadow-sm">
-          <p className="text-[#111418] dark:text-[#e8f3ee] text-sm font-bold mb-2">Pay to Broker UPI</p>
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <p className="text-[#111418] dark:text-[#e8f3ee] text-sm font-bold">Broker Payment Instructions</p>
+            <span className="rounded-full bg-[#eaf4ff] px-2.5 py-1 text-[10px] font-semibold text-[#137fec]">
+              {PAYMENT_METHOD_LABELS[selectedMethod] || 'UPI'}
+            </span>
+          </div>
 
           {loading ? (
             <div className="animate-pulse">
@@ -79,21 +92,86 @@ const AddFundsConfirm = () => {
             <p className="text-sm text-red-600">{error}</p>
           ) : (
             <>
-              <div className="rounded-lg bg-[#f6f7f8] dark:bg-[#16231d] border border-gray-200 dark:border-[#22352d] px-3 py-2.5">
-                <p className="text-[11px] text-[#617589] dark:text-[#9cb7aa] mb-1">UPI ID</p>
-                <p className="text-sm font-semibold text-[#111418] dark:text-[#e8f3ee] break-all">
-                  {paymentInfo?.upiId || 'Not available'}
-                </p>
-              </div>
-              {displayQrUrl ? (
-                <div className="mt-3 rounded-lg border border-gray-200 dark:border-[#22352d] bg-[#fafafa] dark:bg-[#0b120f] p-3">
-                  <img src={displayQrUrl} alt="Broker UPI QR" className="w-full h-auto rounded-lg" />
+              {showUpiSection && (
+                <div className="rounded-xl border border-gray-200 dark:border-[#22352d] bg-[#fafafa] dark:bg-[#0b120f] p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-[#111418] dark:text-[#e8f3ee]">UPI</p>
+                    {selectedMethod === 'upi' && (
+                      <span className="rounded-full bg-[#137fec]/10 px-2.5 py-1 text-[10px] font-semibold text-[#137fec]">
+                        Selected
+                      </span>
+                    )}
+                  </div>
+                  {paymentInfo?.qrPhotoUrl ? (
+                    <div className="mt-3 rounded-lg border border-gray-200 dark:border-[#22352d] bg-white dark:bg-[#111b17] p-3">
+                      <QrCodeFrame
+                        src={paymentInfo.qrPhotoUrl}
+                        settings={paymentInfo?.qrSettings}
+                        alt="Broker UPI QR"
+                        className="w-full rounded-lg"
+                      />
+                    </div>
+                  ) : (
+                    <div className="mt-3 rounded-lg border border-dashed border-gray-300 dark:border-[#22352d] bg-white dark:bg-[#111b17] px-4 py-5 text-center">
+                      <span className="material-symbols-outlined text-gray-400 dark:text-[#6f8b7f] text-3xl">qr_code_2</span>
+                      <p className="mt-2 text-xs text-[#617589] dark:text-[#9cb7aa]">
+                        Broker QR not uploaded. Contact support for payment instructions.
+                      </p>
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <div className="mt-3 rounded-lg border border-dashed border-gray-300 dark:border-[#22352d] bg-[#fafafa] dark:bg-[#0b120f] h-36 flex flex-col items-center justify-center text-center px-4">
-                  <span className="material-symbols-outlined text-gray-400 dark:text-[#6f8b7f] text-3xl">qr_code_2</span>
-                  <p className="text-xs text-[#617589] dark:text-[#9cb7aa] mt-1">QR not available yet.</p>
+              )}
+
+              {showBankTransferSection && (
+                <div className="mt-3 rounded-xl border border-gray-200 dark:border-[#22352d] bg-[#fafafa] dark:bg-[#0b120f] p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-[#111418] dark:text-[#e8f3ee]">Bank Transfer</p>
+                    {selectedMethod === 'bank_transfer' && (
+                      <span className="rounded-full bg-[#137fec]/10 px-2.5 py-1 text-[10px] font-semibold text-[#137fec]">
+                        Selected
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-lg border border-gray-200 dark:border-[#22352d] bg-white dark:bg-[#111b17] px-3 py-2.5">
+                      <p className="text-[11px] text-[#617589] dark:text-[#9cb7aa] mb-1">Account Number</p>
+                      <p className="text-sm font-semibold font-mono text-[#111418] dark:text-[#e8f3ee] break-all">
+                        {paymentInfo?.bankTransferDetails?.accountNumber}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-gray-200 dark:border-[#22352d] bg-white dark:bg-[#111b17] px-3 py-2.5">
+                      <p className="text-[11px] text-[#617589] dark:text-[#9cb7aa] mb-1">IFSC Code</p>
+                      <p className="text-sm font-semibold font-mono text-[#111418] dark:text-[#e8f3ee]">
+                        {paymentInfo?.bankTransferDetails?.ifscCode}
+                      </p>
+                    </div>
+                    {(paymentInfo?.bankTransferDetails?.bankName || paymentInfo?.bankTransferDetails?.accountHolderName) && (
+                      <div className="rounded-lg border border-gray-200 dark:border-[#22352d] bg-white dark:bg-[#111b17] px-3 py-2.5 sm:col-span-2">
+                        <p className="text-[11px] text-[#617589] dark:text-[#9cb7aa] mb-1">Beneficiary</p>
+                        <p className="text-sm font-semibold text-[#111418] dark:text-[#e8f3ee]">
+                          {paymentInfo?.bankTransferDetails?.accountHolderName || paymentInfo?.brokerName || 'Broker'}
+                        </p>
+                        {paymentInfo?.bankTransferDetails?.bankName && (
+                          <p className="mt-1 text-[11px] text-[#617589] dark:text-[#9cb7aa]">
+                            {paymentInfo.bankTransferDetails.bankName}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                    {['RTGS', 'NEFT', 'IMPS'].map((label) => (
+                      <span key={label} className="rounded-full bg-gray-100 dark:bg-[#16231d] px-2.5 py-1 text-[11px] font-semibold text-[#617589] dark:text-[#9cb7aa]">
+                        {label}
+                      </span>
+                    ))}
+                    <span className="text-[11px] text-[#617589] dark:text-[#9cb7aa]">accepted — transfer outside the app using above details.</span>
+                  </div>
                 </div>
+              )}
+
+              {!showUpiSection && !showBankTransferSection && (
+                <p className="text-sm text-[#617589] dark:text-[#9cb7aa]">Broker payment details are not configured yet.</p>
               )}
               {(paymentInfo?.brokerName || paymentInfo?.brokerId) && (
                 <p className="text-[11px] text-[#617589] dark:text-[#9cb7aa] mt-2">

@@ -2,10 +2,11 @@
 // Enforces account-level restrictions on customer actions
 
 import CustomerModel from '../Model/Auth/CustomerModel.js';
-import { getStandardMarketStatus } from '../Utils/tradingSession.js';
+import { getMarketStatusForInstrument } from '../Utils/tradingSession.js';
 
-const isBrokerImpersonationBypass = (req) =>
-  req.user?.isImpersonation && req.user?.impersonatorRole === 'broker';
+const isPrivilegedImpersonation = (req) =>
+  req.user?.isImpersonation &&
+  ['broker', 'admin'].includes(req.user?.impersonatorRole);
 
 const isCustomerPlacementRoute = (req) => {
   const method = String(req.method || '').toUpperCase();
@@ -15,12 +16,15 @@ const isCustomerPlacementRoute = (req) => {
   return routePath.endsWith('/postorder') || routePath.endsWith('/orders');
 };
 
-const buildMarketClosedPayload = () => {
-  const status = getStandardMarketStatus();
+const buildMarketClosedPayload = ({ exchange, segment } = {}) => {
+  const status = getMarketStatusForInstrument({ exchange, segment });
+  const isMcx = status.sessionType === 'MCX';
   return {
     success: false,
     code: 'MARKET_CLOSED',
-    message: 'Market Closed. Open From 9:15AM To 3:15PM On Working Days',
+    message: isMcx
+      ? 'MCX Market Closed. Open From 9:15AM To 11:00PM On Working Days'
+      : 'Market Closed. Open From 9:15AM To 3:15PM On Working Days',
     marketStatus: {
       isOpen: status.isOpen,
       tradingDay: status.tradingDay,
@@ -40,8 +44,8 @@ const buildMarketClosedPayload = () => {
  */
 export const requireTrading = async (req, res, next) => {
   try {
-    // Broker impersonation bypass - brokers managing clients should not be blocked
-    if (isBrokerImpersonationBypass(req)) {
+    // Privileged impersonation bypass - broker and admin managing clients bypass restrictions
+    if (isPrivilegedImpersonation(req)) {
       return next();
     }
 
@@ -68,9 +72,11 @@ export const requireTrading = async (req, res, next) => {
     }
 
     if (isCustomerPlacementRoute(req)) {
-      const marketStatus = getStandardMarketStatus();
+      const exchange = req.body?.exchange;
+      const segment = req.body?.segment;
+      const marketStatus = getMarketStatusForInstrument({ exchange, segment });
       if (!marketStatus.isOpen) {
-        return res.status(403).json(buildMarketClosedPayload());
+        return res.status(403).json(buildMarketClosedPayload({ exchange, segment }));
       }
     }
 

@@ -19,6 +19,11 @@ const formatCurrency = (value) =>
   });
 
 const sanitizeStatus = (status) => String(status || '').trim().toLowerCase();
+const SUPPORTED_PAYMENT_METHODS = ['upi', 'imps', 'neft', 'rtgs'];
+const normalizePaymentMethod = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return SUPPORTED_PAYMENT_METHODS.includes(normalized) ? normalized : 'upi';
+};
 
 const buildStatusQuery = (status) => {
   const normalized = sanitizeStatus(status);
@@ -57,7 +62,7 @@ const mapPaymentResponse = (payment, fallbackCustomerName = '') => ({
   amount: toNumber(payment.amount),
   paymentMethod: payment.payment_method || 'upi',
   transactionRef: payment.payment_reference || '',
-  utrNumber: payment.payment_reference || '',
+  utrNumber: payment.utr_number || '',
   status: payment.status,
   proofUrl: payment.proof_url || '',
   proofType: payment.proof_type || '',
@@ -91,8 +96,10 @@ const findOrCreateFundForPayment = async (payment, brokerIdStr) => {
       withdrawable_balance: 0,
       intraday: { available_limit: 0, used_limit: 0, available: 0, used: 0 },
       overnight: { available_limit: 0, used_limit: 0 },
-      delivery: { available: 0, used: 0 },
+      delivery: { available: 0, used: 0, available_limit: 0, used_limit: 0 },
       option_limit_percentage: 10,
+      commodity_delivery: { available_limit: 0, used_limit: 0 },
+      commodity_option: { limit_percentage: 10, used: 0 },
     });
   }
 
@@ -516,6 +523,7 @@ const createPaymentRequest = async (
 
   // Normalize optional UTR/transaction ID
   const utrNumber = typeof options.utrNumber === 'string' ? options.utrNumber.trim() : '';
+  const normalizedPaymentMethod = normalizePaymentMethod(paymentMethod);
 
   const payment = await PaymentProofModel.create({
     customer_id: options.customerMongoId,
@@ -524,7 +532,7 @@ const createPaymentRequest = async (
     broker_id: options.brokerMongoId || undefined,
     broker_id_str: brokerId,
     amount: parsedAmount,
-    payment_method: paymentMethod === 'upi' ? 'upi' : 'upi',
+    payment_method: normalizedPaymentMethod,
     payment_reference: transactionRef || '',
     payment_date: new Date(),
     utr_number: utrNumber || undefined,
@@ -567,10 +575,10 @@ const createPaymentRequest = async (
       customer_id_str: customerId,
     },
     amountDelta: parsedAmount,
-    note: `Requested amount: ${formatCurrency(parsedAmount)}. Pending broker verification.`,
+    note: `Requested amount: ${formatCurrency(parsedAmount)} via ${normalizedPaymentMethod.toUpperCase()}. Pending broker verification.`,
     metadata: {
       status: payment.status,
-      paymentMethod: payment.payment_method,
+      paymentMethod: normalizedPaymentMethod,
       utrNumber: utrNumber || undefined,
     },
   });

@@ -14,6 +14,7 @@ import {
   blockBroker,
   unblockBroker,
   getBrokerCompliance,
+  getBrokerCredentials,
 } from '../../Controllers/admin/BrokerController.js';
 
 const router = express.Router();
@@ -29,5 +30,6 @@ router.delete('/brokers/:id', deleteBroker);
 router.post('/brokers/:id/block', blockBroker);
 router.post('/brokers/:id/unblock', unblockBroker);
 router.get('/brokers/:id/compliance', getBrokerCompliance);
+router.get('/brokers/:id/credentials', getBrokerCredentials);
 
 export default router;

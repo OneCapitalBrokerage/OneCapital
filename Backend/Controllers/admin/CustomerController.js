@@ -414,7 +414,7 @@ const loginAsCustomer = asyncHandler(async (req, res) => {
   if (!customer) return res.status(404).json({ success: false, message: 'Customer not found.' });
 
   // Use canonical broker linkage used by active customer schema.
-  const { mongoBrokerId, stringBrokerId } = await resolveCustomerBrokerContext(customer);
+  const { stringBrokerId } = await resolveCustomerBrokerContext(customer);
 
   const jwt = await import('jsonwebtoken');
   const token = jwt.default.sign(
@@ -526,7 +526,7 @@ const clearWarning = asyncHandler(async (req, res) => {
 });
 
 /**
- * @desc     Clear customer statement (delete all fund transactions)
+ * @desc     Clear customer statement (embedded fund ledger + legacy fund transactions)
  * @route    DELETE /api/admin/customers/:id/statement
  * @access   Private (Admin only)
  */
@@ -542,18 +542,41 @@ const clearStatement = asyncHandler(async (req, res) => {
   const { mongoBrokerId, stringBrokerId } = await resolveCustomerBrokerContext(customer);
   const customerIdStr = customer.customer_id;
 
-  // Delete all fund transactions for this customer
-  const deleteResult = await FundTransactionModel.deleteMany({
-    customer_id_str: customerIdStr,
-    broker_id_str: stringBrokerId,
-  });
+  const fundQuery = { customer_id_str: customerIdStr };
+  if (stringBrokerId) {
+    fundQuery.broker_id_str = stringBrokerId;
+  }
 
-  console.log(`[Admin] ${adminId} cleared statement for customer ${customerIdStr} — deleted ${deleteResult.deletedCount} transactions`);
+  const fund = await FundModel.findOne(fundQuery).select('_id transactions');
+  const embeddedTransactionCount = Array.isArray(fund?.transactions)
+    ? fund.transactions.length
+    : 0;
+
+  if (fund) {
+    fund.transactions = [];
+    await fund.save();
+  }
+
+  const legacyDeleteQuery = { customer_id_str: customerIdStr };
+  if (stringBrokerId) {
+    legacyDeleteQuery.broker_id_str = stringBrokerId;
+  }
+
+  const deleteResult = await FundTransactionModel.deleteMany(legacyDeleteQuery);
+  const legacyDeletedCount = Number(deleteResult.deletedCount || 0);
+  const totalCleared = embeddedTransactionCount + legacyDeletedCount;
+
+  console.log(
+    `[Admin] ${adminId} cleared statement for customer ${customerIdStr} — cleared embedded=${embeddedTransactionCount}, legacy=${legacyDeletedCount}`
+  );
 
   res.status(200).json({
     success: true,
-    message: `Statement cleared successfully. Deleted ${deleteResult.deletedCount} transactions.`,
-    deletedCount: deleteResult.deletedCount,
+    message: `Statement cleared successfully. Cleared ${totalCleared} entries.`,
+    clearedCount: totalCleared,
+    embeddedClearedCount: embeddedTransactionCount,
+    legacyDeletedCount,
+    fundFound: Boolean(fund),
   });
 });
 

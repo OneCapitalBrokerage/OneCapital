@@ -40,6 +40,14 @@ const FundSchema = new mongoose.Schema({
     available_limit: { type: Number, default: 0 },
     used_limit: { type: Number, default: 0 },
   },
+  commodity_delivery: {
+    available_limit: { type: Number, default: 0 },
+    used_limit: { type: Number, default: 0 },
+  },
+  commodity_option: {
+    limit_percentage: { type: Number, default: 10 },
+    used: { type: Number, default: 0 },
+  },
   
   // Withdrawable
   withdrawable_balance: { type: Number, default: 0 },

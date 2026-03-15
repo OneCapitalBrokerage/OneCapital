@@ -93,15 +93,15 @@ export function stockSquareoffScheduler() {
 
   // =========================================================
   // 3. INTRADAY SQUARE OFF - MCX MARKET
-  // Time: 11:55 PM Mon-Fri
+  // Time: 11:00 PM Mon-Fri (business cutoff)
   // =========================================================
-  cron.schedule("55 23 * * 1-5", async () => {
-    await withLock("cron:squareoff:mcx-close-2355", 240, async () => {
+  cron.schedule("0 23 * * 1-5", async () => {
+    await withLock("cron:squareoff:mcx-close-2300", 240, async () => {
       if (!isTradingDay(new Date())) {
         return console.log("[cron] Market holiday, skipping MCX Intraday Squareoff.");
       }
 
-      console.log(`[cron] Running MCX INTRADAY Auto-Squareoff`);
+      console.log(`[cron] Running MCX INTRADAY Auto-Squareoff (11:00 PM)`);
 
       await processCandidates(
         {
