@@ -606,69 +606,80 @@ const updateOrder = asyncHandler(async (req, res) => {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
-    // ── Weighted average price calculation when qty increases ──
+    // ── Price calculation when price is provided ──
     if (update._requestedPrice !== undefined) {
-      const isQtyIncrease = update.quantity && update.quantity > existing.quantity;
-      if (isQtyIncrease) {
-        const oldQty = toNumber(existing.quantity);
-        const oldPrice = toNumber(existing.effective_entry_price || existing.price);
-        const addedQty = toNumber(update.quantity) - oldQty;
-        // Frontend sends raw LTP for new lots — apply spread here (same as order placement)
-        const rawNewLotPrice = toNumber(update._requestedPrice);
-        const pricingConfig = await getClientPricingConfig({
-          brokerIdStr: existing.broker_id_str,
-          customerIdStr: existing.customer_id_str,
-        });
-        const pricingBucket = existing.pricing_bucket || inferPricingBucket({
-          exchange: existing.exchange,
-          segment: existing.segment,
-          symbol: existing.symbol,
-          orderType: existing.order_type,
-        });
-        const spreadBucket = inferSpreadBucket({
-          exchange: existing.exchange,
-          segment: existing.segment,
-          symbol: existing.symbol,
-          orderType: existing.order_type,
-        });
-        const modSpreadConfig = getSpreadConfigForBucket(pricingConfig, spreadBucket);
-        const newLotPricing = applySpreadToPrice({
-          rawPrice: rawNewLotPrice,
-          side: existing.side,
-          spread: modSpreadConfig.value,
-          spreadMode: modSpreadConfig.mode,
-        });
-        const effectiveNewLotPrice = newLotPricing.effectivePrice;
-        // Single weighted average: (oldQty × oldEffectivePrice + addedQty × newEffectivePrice) / totalQty
-        const weightedAvg = ((oldQty * oldPrice) + (addedQty * effectiveNewLotPrice)) / toNumber(update.quantity);
-        const finalPrice = Math.round(weightedAvg * 100) / 100;
-        update.price = finalPrice;
-        update.raw_entry_price = rawNewLotPrice;
-        update.effective_entry_price = finalPrice;
-        update.entry_spread_applied = newLotPricing.appliedSpread;
+      const isBrokerOverride = rest.broker_price_override === true;
+
+      if (isBrokerOverride) {
+        // Broker explicit price override — use raw price as-is, no spread, no averaging
+        const rawPrice = Math.round(toNumber(update._requestedPrice) * 100) / 100;
+        update.price = rawPrice;
+        update.raw_entry_price = rawPrice;
+        update.effective_entry_price = rawPrice;
+        update.entry_spread_applied = 0;
       } else {
-        // No qty increase — direct price update (broker edit or same-qty modify)
-        const pricingConfig = await getClientPricingConfig({
-          brokerIdStr: existing.broker_id_str,
-          customerIdStr: existing.customer_id_str,
-        });
-        const spreadBucket = inferSpreadBucket({
-          exchange: existing.exchange,
-          segment: existing.segment,
-          symbol: existing.symbol,
-          orderType: existing.order_type,
-        });
-        const editSpreadConfig = getSpreadConfigForBucket(pricingConfig, spreadBucket);
-        const updatedEntryPricing = applySpreadToPrice({
-          rawPrice: update._requestedPrice,
-          side: existing.side,
-          spread: editSpreadConfig.value,
-          spreadMode: editSpreadConfig.mode,
-        });
-        update.price = updatedEntryPricing.effectivePrice;
-        update.raw_entry_price = updatedEntryPricing.rawPrice;
-        update.effective_entry_price = updatedEntryPricing.effectivePrice;
-        update.entry_spread_applied = updatedEntryPricing.appliedSpread;
+        const isQtyIncrease = update.quantity && update.quantity > existing.quantity;
+        if (isQtyIncrease) {
+          const oldQty = toNumber(existing.quantity);
+          const oldPrice = toNumber(existing.effective_entry_price || existing.price);
+          const addedQty = toNumber(update.quantity) - oldQty;
+          // Frontend sends raw LTP for new lots — apply spread here (same as order placement)
+          const rawNewLotPrice = toNumber(update._requestedPrice);
+          const pricingConfig = await getClientPricingConfig({
+            brokerIdStr: existing.broker_id_str,
+            customerIdStr: existing.customer_id_str,
+          });
+          const pricingBucket = existing.pricing_bucket || inferPricingBucket({
+            exchange: existing.exchange,
+            segment: existing.segment,
+            symbol: existing.symbol,
+            orderType: existing.order_type,
+          });
+          const spreadBucket = inferSpreadBucket({
+            exchange: existing.exchange,
+            segment: existing.segment,
+            symbol: existing.symbol,
+            orderType: existing.order_type,
+          });
+          const modSpreadConfig = getSpreadConfigForBucket(pricingConfig, spreadBucket);
+          const newLotPricing = applySpreadToPrice({
+            rawPrice: rawNewLotPrice,
+            side: existing.side,
+            spread: modSpreadConfig.value,
+            spreadMode: modSpreadConfig.mode,
+          });
+          const effectiveNewLotPrice = newLotPricing.effectivePrice;
+          // Single weighted average: (oldQty × oldEffectivePrice + addedQty × newEffectivePrice) / totalQty
+          const weightedAvg = ((oldQty * oldPrice) + (addedQty * effectiveNewLotPrice)) / toNumber(update.quantity);
+          const finalPrice = Math.round(weightedAvg * 100) / 100;
+          update.price = finalPrice;
+          update.raw_entry_price = rawNewLotPrice;
+          update.effective_entry_price = finalPrice;
+          update.entry_spread_applied = newLotPricing.appliedSpread;
+        } else {
+          // No qty increase — direct price update (customer edit or same-qty modify)
+          const pricingConfig = await getClientPricingConfig({
+            brokerIdStr: existing.broker_id_str,
+            customerIdStr: existing.customer_id_str,
+          });
+          const spreadBucket = inferSpreadBucket({
+            exchange: existing.exchange,
+            segment: existing.segment,
+            symbol: existing.symbol,
+            orderType: existing.order_type,
+          });
+          const editSpreadConfig = getSpreadConfigForBucket(pricingConfig, spreadBucket);
+          const updatedEntryPricing = applySpreadToPrice({
+            rawPrice: update._requestedPrice,
+            side: existing.side,
+            spread: editSpreadConfig.value,
+            spreadMode: editSpreadConfig.mode,
+          });
+          update.price = updatedEntryPricing.effectivePrice;
+          update.raw_entry_price = updatedEntryPricing.rawPrice;
+          update.effective_entry_price = updatedEntryPricing.effectivePrice;
+          update.entry_spread_applied = updatedEntryPricing.appliedSpread;
+        }
       }
       delete update._requestedPrice;
     }

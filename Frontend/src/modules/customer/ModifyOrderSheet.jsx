@@ -247,6 +247,7 @@ const ModifyOrderSheet = ({
       // Broker explicit price edit takes priority
       if (priceChanged) {
         payload.price = parsedEditPrice;
+         if (brokerMode) payload.broker_price_override = true;
       } else if (lotsChanged) {
         // Send raw LTP for new lots — backend applies spread and computes weighted average
         payload.price = ltp;
