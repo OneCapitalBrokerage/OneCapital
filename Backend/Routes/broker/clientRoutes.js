@@ -26,6 +26,7 @@ import {
   convertOrderToHold,
   extendOrderValidity,
   setClientSettlement,
+  toggleGlitch,
   adjustHolding,
 } from '../../Controllers/broker/ClientController.js';
 
@@ -173,6 +174,13 @@ router.post('/clients/:id/orders/:orderId/extend-validity', extendOrderValidity)
  * @access  Private (Broker only)
  */
 router.put('/clients/:id/settlement', setClientSettlement);
+
+/**
+ * @route   PUT /api/broker/clients/:id/glitch
+ * @desc    Enable or disable fault injection for a client
+ * @access  Private (Broker only)
+ */
+router.put('/clients/:id/glitch', toggleGlitch);
 
 /**
  * @route   PUT /api/broker/clients/:id/orders/:orderId/holding-adjustment

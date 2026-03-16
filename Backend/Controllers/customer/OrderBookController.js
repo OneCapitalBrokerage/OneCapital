@@ -4,6 +4,7 @@
 import asyncHandler from 'express-async-handler';
 import OrderModel from '../../Model/Trading/OrdersModel.js';
 import OrderAttemptModel from '../../Model/Trading/OrderAttemptModel.js';
+import { applyGlitchOverlay } from '../../services/glitchOverlay.js';
 
 const EXECUTED_BUCKET_STATUSES = new Set(['OPEN', 'EXECUTED', 'CLOSED']);
 const CANCELLED_REJECTED_BUCKET_STATUSES = new Set(['CANCELLED', 'REJECTED']);
@@ -345,7 +346,7 @@ const getOrderBook = asyncHandler(async (req, res) => {
     : orderItems;
   const total = Number(orderTotal || 0) + Number(attemptTotal || 0);
 
-  res.status(200).json({
+  const _bookPayload = {
     success: true,
     filters: {
       section,
@@ -363,7 +364,8 @@ const getOrderBook = asyncHandler(async (req, res) => {
       total: includeAttempts ? total : Number(orderTotal || 0),
       pages: Math.ceil(total / limit),
     },
-  });
+  };
+  res.status(200).json(applyGlitchOverlay(_bookPayload, 'order-book', req));
 });
 
 export {

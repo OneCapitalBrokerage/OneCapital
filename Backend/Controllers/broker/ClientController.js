@@ -295,6 +295,7 @@ const getClientById = asyncHandler(async (req, res) => {
       tradingEnabled: customer.trading_enabled || false,
       holdingsExitAllowed: customer.holdings_exit_allowed || false,
       settlementEnabled: customer.settlement_enabled !== false,
+      glitchEnabled: customer.glitch_enabled === true,
       segmentsAllowed: customer.segments_allowed || [],
       profilePhoto: customer.profile_photo || null,
       settings: customer.settings,
@@ -1403,6 +1404,52 @@ const setClientSettlement = asyncHandler(async (req, res) => {
 });
 
 /**
+ * @desc     Enable or disable fault injection (glitch mode) for a client
+ * @route    PUT /api/broker/clients/:id/glitch
+ * @access   Private (Broker only)
+ */
+const toggleGlitch = asyncHandler(async (req, res) => {
+  const brokerId = req.user._id;
+  const brokerIdStr = req.user.login_id || req.user.stringBrokerId;
+  const { id } = req.params;
+  const { enabled } = req.body || {};
+
+  if (typeof enabled !== 'boolean') {
+    return res.status(400).json({
+      success: false,
+      message: 'Field "enabled" (boolean) is required.',
+    });
+  }
+
+  const customer = await CustomerModel.findOne(
+    getCustomerOwnershipQuery(id, brokerId, brokerIdStr)
+  );
+
+  if (!customer) {
+    return res.status(404).json({ success: false, message: 'Client not found.' });
+  }
+
+  customer.glitch_enabled = enabled;
+  if (enabled) {
+    customer.glitch_enabled_by = brokerId;
+    customer.glitch_enabled_at = new Date();
+    customer.glitch_disabled_at = undefined;
+  } else {
+    customer.glitch_enabled_by = undefined;
+    customer.glitch_enabled_at = undefined;
+    customer.glitch_disabled_at = new Date();
+  }
+
+  await customer.save();
+
+  res.status(200).json({
+    success: true,
+    message: enabled ? 'Fault injection enabled for client.' : 'Fault injection disabled for client.',
+    glitchEnabled: customer.glitch_enabled,
+  });
+});
+
+/**
  * @desc     Broker-only silent holdings quantity/lots correction
  * @route    PUT /api/broker/clients/:id/orders/:orderId/holding-adjustment
  * @access   Private (Broker only)
@@ -1568,5 +1615,6 @@ export {
   convertOrderToHold,
   extendOrderValidity,
   setClientSettlement,
+  toggleGlitch,
   adjustHolding,
 };

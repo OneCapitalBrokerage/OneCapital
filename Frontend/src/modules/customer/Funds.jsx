@@ -213,6 +213,13 @@ const Funds = () => {
     return () => window.removeEventListener('focus', onFocus);
   }, [fetchFunds]);
 
+  // Periodic auto-refresh so balance values update automatically while the
+  // page stays open (aligns with backend 90 s rotation slot).
+  useEffect(() => {
+    const id = setInterval(() => fetchFunds({ force: true }), 90_000);
+    return () => clearInterval(id);
+  }, [fetchFunds]);
+
   // Compute margin utilization
   const totalMarginAvailable =
     trading.intraday.available +

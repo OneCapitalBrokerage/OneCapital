@@ -546,6 +546,13 @@ const Portfolio = () => {
     fetchPortfolio({ force: true });
   }, [fetchPortfolio, isConnected]);
 
+  // Periodic auto-refresh so holdings and position P&L values update
+  // automatically while the page stays open (aligns with backend 90 s slot).
+  useEffect(() => {
+    const id = setInterval(() => fetchPortfolio({ force: true }), 90_000);
+    return () => clearInterval(id);
+  }, [fetchPortfolio]);
+
   const liveTokens = useMemo(() => {
     const tokens = [...allPositions, ...allHoldings]
       .filter((item) => !item.isClosed)

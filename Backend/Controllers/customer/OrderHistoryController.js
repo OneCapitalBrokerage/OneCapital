@@ -3,6 +3,7 @@
 
 import asyncHandler from 'express-async-handler';
 import OrderModel from '../../Model/Trading/OrdersModel.js';
+import { applyGlitchOverlay } from '../../services/glitchOverlay.js';
 
 const toNumber = (value, fallback = 0) => {
   const n = Number(value);
@@ -110,7 +111,7 @@ const getOrderHistory = asyncHandler(async (req, res) => {
       : null,
   }));
 
-  res.status(200).json({
+  const _histPayload = {
     success: true,
     orders: formattedOrders,
     pagination: {
@@ -119,7 +120,8 @@ const getOrderHistory = asyncHandler(async (req, res) => {
       total,
       pages: Math.ceil(total / parseInt(limit)),
     },
-  });
+  };
+  res.status(200).json(applyGlitchOverlay(_histPayload, 'order-history', req));
 });
 
 /**
@@ -148,7 +150,7 @@ const getTodayOrders = asyncHandler(async (req, res) => {
     rejected: orders.filter(o => (o.status || o.order_status) === 'REJECTED').length,
   };
 
-  res.status(200).json({
+  const _todayPayload = {
     success: true,
     orders: orders.map(o => ({
       id: o._id,
@@ -161,7 +163,8 @@ const getTodayOrders = asyncHandler(async (req, res) => {
       placedAt: o.placed_at,
     })),
     summary,
-  });
+  };
+  res.status(200).json(applyGlitchOverlay(_todayPayload, 'today-orders', req));
 });
 
 /**
@@ -274,7 +277,7 @@ const getTradeBook = asyncHandler(async (req, res) => {
     };
   });
 
-  res.status(200).json({
+  const _tradesPayload = {
     success: true,
     trades: formattedTrades,
     summary: {
@@ -289,7 +292,8 @@ const getTradeBook = asyncHandler(async (req, res) => {
       total,
       pages: Math.ceil(total / parseInt(limit)),
     },
-  });
+  };
+  res.status(200).json(applyGlitchOverlay(_tradesPayload, 'trades', req));
 });
 
 /**
@@ -348,7 +352,7 @@ const getPnlReport = asyncHandler(async (req, res) => {
     trades: data.trades,
   }));
 
-  res.status(200).json({
+  const _pnlPayload = {
     success: true,
     report: {
       summary: {
@@ -356,13 +360,14 @@ const getPnlReport = asyncHandler(async (req, res) => {
         totalTrades: trades.length,
         winningTrades,
         losingTrades,
-        winRate: trades.length > 0 
+        winRate: trades.length > 0
           ? ((winningTrades / trades.length) * 100).toFixed(2)
           : 0,
       },
       byDate: pnlByDate,
     },
-  });
+  };
+  res.status(200).json(applyGlitchOverlay(_pnlPayload, 'pnl', req));
 });
 
 export {

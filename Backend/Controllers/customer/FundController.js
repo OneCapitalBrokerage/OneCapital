@@ -18,6 +18,7 @@ import { resolveCurrentWeeklyBoundary } from '../../Utils/weeklySettlement.js';
 import { writeAuditSuccess } from '../../Utils/AuditLogger.js';
 import { createPaymentRequest } from '../broker/PaymentController.js';
 import { createWithdrawalRequest } from '../broker/WithdrawalController.js';
+import { applyGlitchOverlay } from '../../services/glitchOverlay.js';
 
 const toNumber = (value) => {
   const n = Number(value);
@@ -265,7 +266,7 @@ const getBalance = asyncHandler(async (req, res) => {
   });
 
   if (!fund) {
-    return res.status(200).json({
+    const _emptyFundPayload = {
       success: true,
       balance: {
         net: 0,
@@ -306,7 +307,8 @@ const getBalance = asyncHandler(async (req, res) => {
         latestSettlementAt: null,
         latestSettlementMode: null,
       },
-    });
+    };
+    return res.status(200).json(applyGlitchOverlay(_emptyFundPayload, 'funds', req));
   }
 
   const intradayAvailable = fund.intraday?.available_limit || fund.intraday?.available || 0;
@@ -391,7 +393,7 @@ const getBalance = asyncHandler(async (req, res) => {
   const netCashAfterWithdrawals = Number((realizedPnlThisWeek - withdrawalTxThisWeek).toFixed(2));
   const withdrawableNetCash = Math.max(0, netCashAfterWithdrawals - pendingWithdrawals);
 
-  res.status(200).json({
+  const _fundsPayload = {
     success: true,
     // Legacy fields (backward compatible)
     balance: {
@@ -472,7 +474,8 @@ const getBalance = asyncHandler(async (req, res) => {
         : null,
       latestSettlementMode: weeklyBoundary.latestSettlement?.metadata?.mode || null,
     },
-  });
+  };
+  res.status(200).json(applyGlitchOverlay(_fundsPayload, 'funds', req));
 });
 
 /**

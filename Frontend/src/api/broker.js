@@ -89,6 +89,11 @@ const brokerApi = {
     return response.data;
   },
 
+  toggleGlitch: async (clientId, enabled) => {
+    const response = await api.put(`/broker/clients/${clientId}/glitch`, { enabled });
+    return response.data;
+  },
+
   toggleOrderExitAllowed: async (clientId, orderId, allowed) => {
     const response = await api.put(`/broker/clients/${clientId}/orders/${orderId}/exit-toggle`, { allowed });
     return response.data;

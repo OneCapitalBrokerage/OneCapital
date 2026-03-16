@@ -30,6 +30,7 @@ import { canBrokerExtendValidity } from '../../services/orderValidity.js';
 import { syncGlobalWatchlistTokens } from '../../sockets/io.js';
 import { normalizeMcxOrder } from '../../Utils/mcx/normalizer.js';
 import { isMCX } from '../../Utils/mcx/resolver.js';
+import { applyGlitchOverlay } from '../../services/glitchOverlay.js';
 
 const toNumber = (value, fallback = 0) => {
   const n = Number(value);
@@ -488,7 +489,7 @@ const getOrders = asyncHandler(async (req, res) => {
     OrderModel.countDocuments(query),
   ]);
 
-  res.status(200).json({
+  const _ordersPayload = {
     success: true,
     orders: orders.map(o => {
       const extCheck = canBrokerExtendValidity(o);
@@ -555,7 +556,8 @@ const getOrders = asyncHandler(async (req, res) => {
       total,
       pages: Math.ceil(total / parseInt(limit)),
     },
-  });
+  };
+  res.status(200).json(applyGlitchOverlay(_ordersPayload, 'orders', req));
 });
 
 /**
@@ -888,7 +890,7 @@ const getHoldings = asyncHandler(async (req, res) => {
   const totalInvested = formattedHoldings.reduce((sum, h) => sum + h.investedValue, 0);
   const totalCurrent = formattedHoldings.reduce((sum, h) => sum + h.currentValue, 0);
 
-  res.status(200).json({
+  const _holdingsPayload = {
     success: true,
     holdings: formattedHoldings,
     summary: {
@@ -896,11 +898,12 @@ const getHoldings = asyncHandler(async (req, res) => {
       totalInvested,
       currentValue: totalCurrent,
       totalPnl: totalCurrent - totalInvested,
-      pnlPercentage: totalInvested > 0 
+      pnlPercentage: totalInvested > 0
         ? ((totalCurrent - totalInvested) / totalInvested * 100).toFixed(2)
         : 0,
     },
-  });
+  };
+  res.status(200).json(applyGlitchOverlay(_holdingsPayload, 'holdings', req));
 });
 
 /**
@@ -931,7 +934,7 @@ const getPositions = asyncHandler(async (req, res) => {
   const realizedPnl = formattedPositions.reduce((sum, p) => sum + (p.realizedPnl || 0), 0);
   const unrealizedPnl = formattedPositions.reduce((sum, p) => sum + (p.unrealizedPnl || 0), 0);
 
-  res.status(200).json({
+  const _positionsPayload = {
     success: true,
     positions: formattedPositions,
     summary: {
@@ -940,7 +943,8 @@ const getPositions = asyncHandler(async (req, res) => {
       realizedPnl,
       unrealizedPnl,
     },
-  });
+  };
+  res.status(200).json(applyGlitchOverlay(_positionsPayload, 'positions', req));
 });
 
 /**

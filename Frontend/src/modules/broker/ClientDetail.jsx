@@ -600,6 +600,20 @@ const ClientDetail = () => {
     }
   };
 
+  const handleToggleGlitch = async () => {
+    if (!client) return;
+    const newEnabled = !client.glitchEnabled;
+    setActionLoading(true);
+    try {
+      await brokerApi.toggleGlitch(clientId, newEnabled);
+      setClient((prev) => ({ ...prev, glitchEnabled: newEnabled }));
+    } catch (err) {
+      console.error('Failed to toggle glitch mode:', err);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   // Overview metrics from order data
   const overviewMetrics = useMemo(() => {
     const totalOpenPnl = openOrders.reduce((sum, o) => {
@@ -1081,6 +1095,41 @@ const ClientDetail = () => {
                   >
                     <span className={`block w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-white shadow-sm transform transition-transform duration-200 mt-0.5 ${
                       client.settlementEnabled ? 'translate-x-5' : 'translate-x-0.5'
+                    }`}></span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Glitch Mode Toggle */}
+              <div className={`flex items-center justify-between bg-gray-50 p-3 rounded-xl ${client.status === 'blocked' || client.blockedByAdmin ? 'opacity-50 pointer-events-none' : ''}`}>
+                <div className="flex items-center gap-2 sm:gap-3">
+                  <div className={`p-2 rounded-full shadow-sm bg-white ${client.glitchEnabled ? 'text-red-600' : 'text-gray-400'}`}>
+                    <span className="material-symbols-outlined text-[18px] sm:text-[20px]">bug_report</span>
+                  </div>
+                  <div>
+                    <p className="text-xs sm:text-sm font-bold">Glitch Mode</p>
+                    <p className="text-[10px] sm:text-xs text-[#617589]">
+                      {client.glitchEnabled ? 'Active — client views are distorted' : 'Inactive — client sees normal data'}
+                    </p>
+                  </div>
+                </div>
+                <div className="relative inline-block w-10 sm:w-11 h-5 sm:h-6 align-middle select-none">
+                  <input
+                    type="checkbox"
+                    id="glitchToggle"
+                    checked={!!client.glitchEnabled}
+                    onChange={handleToggleGlitch}
+                    disabled={actionLoading || client.status === 'blocked' || client.blockedByAdmin}
+                    className="sr-only peer"
+                  />
+                  <label
+                    htmlFor="glitchToggle"
+                    className={`block overflow-hidden h-5 sm:h-6 rounded-full cursor-pointer transition-colors duration-200 ${
+                      client.glitchEnabled ? 'bg-red-600' : 'bg-gray-300'
+                    }`}
+                  >
+                    <span className={`block w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-white shadow-sm transform transition-transform duration-200 mt-0.5 ${
+                      client.glitchEnabled ? 'translate-x-5' : 'translate-x-0.5'
                     }`}></span>
                   </label>
                 </div>
