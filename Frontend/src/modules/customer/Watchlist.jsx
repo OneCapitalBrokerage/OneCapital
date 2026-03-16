@@ -1371,7 +1371,7 @@ const Watchlist = () => {
   }, [getMarketDepthToken]);
 
   const openOrderSheet = (side, stock, ltpData) => {
-    if (!isCustomerTradeAllowed) return;
+    if (!isTradingAllowed({ exchange: stock?.exchange, segment: stock?.segment })) return;
     setOrderSheet({ open: true, side, stock, ltpData });
   };
 
@@ -1890,7 +1890,7 @@ const Watchlist = () => {
                       </div>
                     </div>
                     <div className="border-t border-gray-100 dark:border-[#22352d] px-3 sm:px-4 pt-2.5 pb-3.5">
-                      {isCustomerTradeAllowed ? (
+                      {isTradingAllowed({ exchange: stock?.exchange, segment: stock?.segment }) ? (
                         <div className="grid grid-cols-2 gap-2.5 w-full">
                           <button
                             type="button"
@@ -1924,7 +1924,7 @@ const Watchlist = () => {
                         </div>
                       ) : (
                         <p className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-900/40 px-3 py-2 text-[11px] font-medium text-amber-700 dark:text-amber-300">
-                          {marketClosedReason}
+                          {getClosedMessage({ exchange: stock?.exchange, segment: stock?.segment }) || marketClosedReason}
                         </p>
                       )}
                     </div>
@@ -2174,8 +2174,8 @@ const Watchlist = () => {
         tickUpdatedAtRef={tickUpdatedAtRef}
         onClose={closeOrderSheet}
         onOrderPlaced={handleOrderPlaced}
-        disableTrading={!isCustomerTradeAllowed}
-        disableReason={marketClosedReason}
+        disableTrading={!isTradingAllowed({ exchange: orderSheet.stock?.exchange, segment: orderSheet.stock?.segment })}
+        disableReason={getClosedMessage({ exchange: orderSheet.stock?.exchange, segment: orderSheet.stock?.segment }) || marketClosedReason}
       />
     </div>
   );

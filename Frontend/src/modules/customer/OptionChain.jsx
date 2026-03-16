@@ -54,7 +54,7 @@ const OptionChain = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { ticksRef, tickUpdatedAtRef } = useMarketData();
-  const { isCustomerTradeAllowed, marketClosedReason } = useCustomerTradingGate();
+  const { isCustomerTradeAllowed, marketClosedReason, isTradingAllowed, getClosedMessage } = useCustomerTradingGate();
 
   const state = location.state || {};
   const selectedStock = state.stock || null;
@@ -314,7 +314,7 @@ const OptionChain = () => {
   ]);
 
   const openOrderSheet = (side) => {
-    if (!isCustomerTradeAllowed) return;
+    if (!isTradingAllowed({ segment: optionSegment })) return;
     if (!orderStock) return;
     setOrderSheet({ open: true, side });
   };
@@ -594,7 +594,7 @@ const OptionChain = () => {
             })()}
           </span>
         </div>
-        {isCustomerTradeAllowed ? (
+        {isTradingAllowed({ segment: optionSegment }) ? (
           <div className="grid grid-cols-2 gap-2 sm:gap-3">
             <button
               type="button"
@@ -616,7 +616,7 @@ const OptionChain = () => {
           </div>
         ) : (
           <p className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-900/40 px-3 py-2 text-[11px] font-medium text-amber-700 dark:text-amber-300">
-            {marketClosedReason}
+            {getClosedMessage({ segment: optionSegment }) || marketClosedReason}
           </p>
         )}
       </footer>
@@ -630,8 +630,8 @@ const OptionChain = () => {
         tickUpdatedAtRef={tickUpdatedAtRef}
         orderTypeOverride="OPTION_CHAIN"
         onClose={closeOrderSheet}
-        disableTrading={!isCustomerTradeAllowed}
-        disableReason={marketClosedReason}
+        disableTrading={!isTradingAllowed({ exchange: orderStock?.exchange, segment: orderStock?.segment || optionSegment })}
+        disableReason={getClosedMessage({ exchange: orderStock?.exchange, segment: orderStock?.segment || optionSegment }) || marketClosedReason}
       />
     </div>
   );

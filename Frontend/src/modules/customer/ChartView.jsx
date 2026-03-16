@@ -60,7 +60,7 @@ const ChartView = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { subscribe, unsubscribe, ticksRef, tickUpdatedAtRef } = useMarketData();
-  const { isCustomerTradeAllowed, marketClosedReason } = useCustomerTradingGate();
+  const { isCustomerTradeAllowed, marketClosedReason, isTradingAllowed, getClosedMessage } = useCustomerTradingGate();
 
   const state = location.state || {};
   const stock = state.stock || null;
@@ -279,7 +279,7 @@ const ChartView = () => {
         </div>
         <div className="flex items-center justify-end gap-2">
           {!isIndexInstrument && (
-            isCustomerTradeAllowed ? (
+            isTradingAllowed({ exchange: stock?.exchange, segment: stock?.segment }) ? (
               <>
                 <button
                   type="button"
@@ -308,7 +308,7 @@ const ChartView = () => {
                 </button>
               </>
             ) : (
-              <span className="text-[11px] text-amber-700 dark:text-amber-300 font-medium">{marketClosedReason}</span>
+              <span className="text-[11px] text-amber-700 dark:text-amber-300 font-medium">{getClosedMessage({ exchange: stock?.exchange, segment: stock?.segment }) || marketClosedReason}</span>
             )
           )}
         </div>
@@ -518,8 +518,8 @@ const ChartView = () => {
           ticksRef={ticksRef}
           tickUpdatedAtRef={tickUpdatedAtRef}
           onClose={() => setOrderSheet({ open: false, side: 'BUY' })}
-          disableTrading={!isCustomerTradeAllowed}
-          disableReason={marketClosedReason}
+          disableTrading={!isTradingAllowed({ exchange: stock?.exchange, segment: stock?.segment })}
+          disableReason={getClosedMessage({ exchange: stock?.exchange, segment: stock?.segment }) || marketClosedReason}
         />
       )}
     </div>

@@ -30,7 +30,7 @@ import {
 import { resolveOrderValidity } from "../../services/orderValidity.js";
 import { isMCX } from "../../Utils/mcx/resolver.js";
 import { logFailedOrderAttempt } from "../../Utils/OrderAttemptLogger.js";
-import { getStandardMarketStatus } from "../../Utils/tradingSession.js";
+import { getMarketStatusForInstrument } from "../../Utils/tradingSession.js";
 
 const toNumber = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const normalizeProduct = (value) => String(value || "").trim().toUpperCase();
@@ -56,12 +56,15 @@ const isPrivilegedImpersonation = (req) =>
   req.user?.isImpersonation &&
   ['broker', 'admin'].includes(req.user?.impersonatorRole);
 
-const marketClosedPayload = () => {
-  const marketStatus = getStandardMarketStatus();
+const marketClosedPayload = ({ exchange, segment } = {}) => {
+  const marketStatus = getMarketStatusForInstrument({ exchange, segment });
+  const isMcx = marketStatus.sessionType === 'MCX';
   return {
     success: false,
     code: 'MARKET_CLOSED',
-    message: 'Market Closed. Open From 9:15AM To 3:15PM On Working Days',
+    message: isMcx
+      ? 'MCX Market Closed. Open From 9:15AM To 11:00PM On Working Days'
+      : 'Market Closed. Open From 9:15AM To 3:15PM On Working Days',
     marketStatus: {
       isOpen: marketStatus.isOpen,
       tradingDay: marketStatus.tradingDay,
@@ -676,9 +679,9 @@ const updateOrder = asyncHandler(async (req, res) => {
       isCustomerRequest(req) &&
       !isPrivilegedImpersonation(req)
     ) {
-      const marketStatus = getStandardMarketStatus();
+      const marketStatus = getMarketStatusForInstrument({ exchange: existing.exchange, segment: existing.segment });
       if (!marketStatus.isOpen) {
-        return res.status(403).json(marketClosedPayload());
+        return res.status(403).json(marketClosedPayload({ exchange: existing.exchange, segment: existing.segment }));
       }
     }
 

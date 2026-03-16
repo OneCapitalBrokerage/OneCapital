@@ -19,9 +19,6 @@ import { releaseMarginOnClose } from './marginLifecycle.js';
 import {
   getClientPricingConfig,
   inferPricingBucket,
-  inferSpreadBucket,
-  getSpreadConfigForBucket,
-  applySpreadToPrice,
   calculateBrokerageForLeg,
   getClosingSide,
 } from '../Utils/ClientPricingEngine.js';
@@ -117,13 +114,6 @@ export async function closeOrderAndSettle(orderId, { exitPrice, exitReason = 'ma
       symbol: order.symbol,
       orderType: order.order_type,
     });
-    const spreadBucket = inferSpreadBucket({
-      exchange: order.exchange,
-      segment: order.segment,
-      symbol: order.symbol,
-      orderType: order.order_type,
-    });
-
     const entryEffectivePrice = toNumber(order.effective_entry_price || order.price);
     const entrySpreadApplied = toNumber(order.entry_spread_applied);
     const inferredRawEntry = entryEffectivePrice - entrySpreadApplied;
@@ -134,14 +124,9 @@ export async function closeOrderAndSettle(orderId, { exitPrice, exitReason = 'ma
     const fallbackRawExit = toNumber(order.raw_entry_price || order.effective_entry_price || order.price);
     const safeRawExitPrice = rawExitInput > 0 ? rawExitInput : fallbackRawExit;
     const closingSide = getClosingSide(order.side);
-    const exitSpreadConfig = getSpreadConfigForBucket(pricingConfig, spreadBucket);
-    const exitPricing = applySpreadToPrice({
-      rawPrice: safeRawExitPrice,
-      side: closingSide,
-      spread: exitSpreadConfig.value,
-      spreadMode: exitSpreadConfig.mode,
-    });
-    const effectiveExitPrice = exitPricing.effectivePrice;
+
+    // Exit uses raw price — spread applies only on entry.
+    const effectiveExitPrice = safeRawExitPrice;
 
     // 2. Calculate realized P&L
     const grossPnl = order.side === 'BUY'
@@ -180,10 +165,10 @@ export async function closeOrderAndSettle(orderId, { exitPrice, exitReason = 'ma
       toNumber(order.entry_spread_applied, entryEffectivePrice - entryRawPrice)
     );
     order.raw_exit_price = round2(safeRawExitPrice);
-    order.effective_exit_price = round2(effectiveExitPrice);
-    order.exit_spread_applied = round2(exitPricing.appliedSpread);
-    order.exit_price = round2(effectiveExitPrice);
-    order.closed_ltp = round2(effectiveExitPrice);
+    order.effective_exit_price = round2(safeRawExitPrice);
+    order.exit_spread_applied = 0;
+    order.exit_price = round2(safeRawExitPrice);
+    order.closed_ltp = round2(safeRawExitPrice);
     order.pricing_bucket = pricingBucket;
     order.realized_pnl = round2(netPnl);
     order.brokerage = round2(totalBrokerage);

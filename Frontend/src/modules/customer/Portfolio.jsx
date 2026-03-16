@@ -206,7 +206,7 @@ const sanitizePortfolioStateForCache = (state) => ({
 const Portfolio = () => {
   const navigate = useNavigate();
   const { ticksRef, tickUpdatedAtRef, subscribe, unsubscribe, isConnected } = useMarketData();
-  const { isCustomerTradeAllowed, marketClosedReason } = useCustomerTradingGate();
+  const { isCustomerTradeAllowed, marketClosedReason, isTradingAllowed, getClosedMessage } = useCustomerTradingGate();
   const { user } = useAuth();
   const holdingsExitAllowed = user?.holdingsExitAllowed === true;
   const [activeTab, setActiveTab] = useState('positions');
@@ -1175,7 +1175,7 @@ const Portfolio = () => {
               activeTab === 'holdings' &&
               ['PENDING', 'PENDING_APPROVAL', 'TRIGGER_PENDING', 'AMO', 'HOLD'].includes(status);
             const isActionableOrder = isActionableOrderRow(item);
-            const isHoldingActionBlocked = activeTab === 'holdings' && !isCustomerTradeAllowed;
+            const isHoldingActionBlocked = activeTab === 'holdings' && !isTradingAllowed({ exchange: item.exchange, segment: item.segment });
             const isHoldingsExitLocked = activeTab === 'holdings' && isHoldingsExitLockedForOrder(item);
             const canShowActions =
               !item.isClosed &&
@@ -1303,7 +1303,7 @@ const Portfolio = () => {
                 )}
                 {isHoldingActionBlocked && !isPendingHolding && (
                   <div className="px-3 py-2 text-[10px] sm:text-xs text-amber-700 bg-amber-50 dark:bg-amber-900/20 border-t border-amber-100 dark:border-amber-900/30">
-                    {marketClosedReason}
+                    {getClosedMessage({ exchange: item.exchange, segment: item.segment }) || marketClosedReason}
                   </div>
                 )}
               </div>
@@ -1317,7 +1317,8 @@ const Portfolio = () => {
         order={modifyOrder}
         onClose={() => setModifyOrder(null)}
         onModified={() => fetchPortfolio({ force: true })}
-        marketClosedForCustomer={!isCustomerTradeAllowed}
+        marketClosedForCustomer={modifyOrder ? !isTradingAllowed({ exchange: modifyOrder.exchange, segment: modifyOrder.segment }) : false}
+        marketClosedReason={modifyOrder ? (getClosedMessage({ exchange: modifyOrder.exchange, segment: modifyOrder.segment }) || marketClosedReason) : ''}
         livePrices={livePrices}
       />
 
@@ -1343,8 +1344,8 @@ const Portfolio = () => {
         onConfirm={handleExitConfirm}
         submitting={exitSubmitting}
         error={exitError}
-        marketClosedForCustomer={!isCustomerTradeAllowed}
-        marketClosedReason={marketClosedReason}
+        marketClosedForCustomer={exitOrder ? !isTradingAllowed({ exchange: exitOrder.exchange, segment: exitOrder.segment }) : false}
+        marketClosedReason={exitOrder ? (getClosedMessage({ exchange: exitOrder.exchange, segment: exitOrder.segment }) || marketClosedReason) : marketClosedReason}
       />
     </div>
   );
