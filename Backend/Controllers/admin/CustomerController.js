@@ -422,7 +422,7 @@ const loginAsCustomer = asyncHandler(async (req, res) => {
       id: customer._id,
       role: 'customer',
       customer_id: customer.customer_id,
-      mongoBrokerId,
+      mongoBrokerIdStr: customer.broker_id_str || null,
       stringBrokerId,
       impersonatedBy: adminId,
       impersonatorRole: 'admin',
