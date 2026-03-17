@@ -6,6 +6,8 @@ import CustomerModel from '../../Model/Auth/CustomerModel.js';
 import BrokerModel from '../../Model/Auth/BrokerModel.js';
 import FundModel from '../../Model/FundManagement/FundModel.js';
 import FundTransactionModel from '../../Model/FundManagement/FundTransactionModel.js';
+import PaymentProofModel from '../../Model/FundManagement/PaymentProofModel.js';
+import WithdrawalRequestModel from '../../Model/FundManagement/WithdrawalRequestModel.js';
 import OrderModel from '../../Model/Trading/OrdersModel.js';
 
 // Helper: find customer by customer_id string OR mongo _id
@@ -568,7 +570,8 @@ const clearWarning = asyncHandler(async (req, res) => {
 });
 
 /**
- * @desc     Clear customer statement (embedded fund ledger + legacy fund transactions)
+ * @desc     Clear customer statement (embedded fund ledger, legacy fund transactions,
+ *           payment proofs, and withdrawal requests)
  * @route    DELETE /api/admin/customers/:id/statement
  * @access   Private (Admin only)
  */
@@ -604,12 +607,25 @@ const clearStatement = asyncHandler(async (req, res) => {
     legacyDeleteQuery.broker_id_str = stringBrokerId;
   }
 
-  const deleteResult = await FundTransactionModel.deleteMany(legacyDeleteQuery);
-  const legacyDeletedCount = Number(deleteResult.deletedCount || 0);
-  const totalCleared = embeddedTransactionCount + legacyDeletedCount;
+  const requestDeleteQuery = { customer_id_str: customerIdStr };
+  if (stringBrokerId) {
+    requestDeleteQuery.broker_id_str = stringBrokerId;
+  }
+
+  const [legacyResult, paymentProofResult, withdrawalResult] = await Promise.all([
+    FundTransactionModel.deleteMany(legacyDeleteQuery),
+    PaymentProofModel.deleteMany(requestDeleteQuery),
+    WithdrawalRequestModel.deleteMany(requestDeleteQuery),
+  ]);
+
+  const legacyDeletedCount = Number(legacyResult.deletedCount || 0);
+  const paymentProofsDeletedCount = Number(paymentProofResult.deletedCount || 0);
+  const withdrawalsDeletedCount = Number(withdrawalResult.deletedCount || 0);
+  const totalCleared = embeddedTransactionCount + legacyDeletedCount
+    + paymentProofsDeletedCount + withdrawalsDeletedCount;
 
   console.log(
-    `[Admin] ${adminId} cleared statement for customer ${customerIdStr} — cleared embedded=${embeddedTransactionCount}, legacy=${legacyDeletedCount}`
+    `[Admin] ${adminId} cleared statement for customer ${customerIdStr} — embedded=${embeddedTransactionCount}, legacy=${legacyDeletedCount}, paymentProofs=${paymentProofsDeletedCount}, withdrawals=${withdrawalsDeletedCount}`
   );
 
   res.status(200).json({
@@ -618,6 +634,8 @@ const clearStatement = asyncHandler(async (req, res) => {
     clearedCount: totalCleared,
     embeddedClearedCount: embeddedTransactionCount,
     legacyDeletedCount,
+    paymentProofsDeletedCount,
+    withdrawalsDeletedCount,
     fundFound: Boolean(fund),
   });
 });
