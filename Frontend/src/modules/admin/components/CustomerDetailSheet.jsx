@@ -81,6 +81,12 @@ const CustomerDetailSheet = ({ customerId, onClose }) => {
       const result = await adminApi.clearCustomerStatement(customer._id);
       setClearStatementResult(result);
       setShowClearStatementConfirm(false);
+
+      // Purge customer-facing session caches so the Funds page and Statement
+      // page fetch fresh (now-empty) data when admin impersonates next.
+      try {
+        sessionStorage.removeItem('customer_view_cache:funds_tab_v1');
+      } catch { /* ignore */ }
     } catch (err) {
       setError(err.message || 'Failed to clear statement');
     } finally {
