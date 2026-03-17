@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { resolveOrderPnl, getEffectiveEntryPrice } from '../../utils/calculateBrokerage';
+import { isMcxSegment, getMcxSpec } from '../../utils/mcxSpecs';
 
 const toNumber = (value, fallback = 0) => {
   const n = Number(value);
@@ -40,11 +41,29 @@ const ExitOrderSheet = ({
   const exchange = (order?.exchange || 'NSE').toUpperCase();
   const side = (order?.side || 'BUY').toUpperCase();
   const product = String(order?.product || '').toUpperCase();
+  const isMcx = useMemo(() => isMcxSegment(order?.exchange, order?.segment), [order?.exchange, order?.segment]);
+  const mcxSpec = useMemo(() => {
+    if (!isMcx) return null;
+    return getMcxSpec(order?.name) || getMcxSpec(order?.symbol) || getMcxSpec(order?.tradingsymbol || order?.trading_symbol);
+  }, [isMcx, order?.name, order?.symbol, order?.tradingsymbol, order?.trading_symbol]);
+  const upc = toNumber(order?.units_per_contract, 0);
+  const rawLotSize = toNumber(order?.lot_size || order?.lotSize, 0);
+  const lotSize = mcxSpec ? mcxSpec.units_per_contract : (upc > 0 ? upc : (rawLotSize || 1));
+  const maxLots = lotSize > 1 ? Math.floor(maxQuantity / lotSize) : maxQuantity;
   const isLongTermHolding = product === 'CNC' || product === 'NRML';
   const isExitBlockedByMarketClose = marketClosedForCustomer && isLongTermHolding;
-  const [quantityInput, setQuantityInput] = useState(String(maxQuantity || ''));
+  const [lotsInput, setLotsInput] = useState(String(maxLots || ''));
   const [orderType, setOrderType] = useState('MARKET');
   const [localError, setLocalError] = useState(null);
+
+  // Reset lots input when sheet opens or order changes
+  useEffect(() => {
+    if (isOpen) {
+      setLotsInput(String(maxLots || ''));
+      setOrderType('MARKET');
+      setLocalError(null);
+    }
+  }, [isOpen, maxLots]);
 
   useEffect(() => {
     if (!isOpen) return undefined;
@@ -68,11 +87,13 @@ const ExitOrderSheet = ({
     return () => cancelAnimationFrame(animationFrameId);
   }, [isOpen, instrumentToken, liveLtpRef, snapshotLtp]);
 
-  const exitQuantity = useMemo(() => {
-    const parsed = Number(quantityInput);
-    if (!Number.isFinite(parsed)) return 0;
+  const exitLots = useMemo(() => {
+    const parsed = Number(lotsInput);
+    if (!Number.isFinite(parsed) || parsed <= 0) return 0;
     return Math.floor(parsed);
-  }, [quantityInput]);
+  }, [lotsInput]);
+
+  const exitQuantity = exitLots * lotSize;
 
   const ltpPct = useMemo(() => {
     if (!avgPrice) return 0;
@@ -90,17 +111,18 @@ const ExitOrderSheet = ({
 
   if (!isOpen || !order) return null;
 
-  const setHalfQuantity = () => {
-    if (maxQuantity <= 1) {
-      setQuantityInput(String(maxQuantity));
+  const setHalfLots = () => {
+    if (maxLots <= 1) {
+      setLotsInput(String(maxLots));
+      setLocalError(null);
       return;
     }
-    setQuantityInput(String(Math.max(1, Math.floor(maxQuantity / 2))));
+    setLotsInput(String(Math.max(1, Math.floor(maxLots / 2))));
     setLocalError(null);
   };
 
-  const setMaxQuantity = () => {
-    setQuantityInput(String(maxQuantity));
+  const setMaxLots = () => {
+    setLotsInput(String(maxLots));
     setLocalError(null);
   };
 
@@ -108,11 +130,11 @@ const ExitOrderSheet = ({
     if (isExitBlockedByMarketClose) {
       return marketClosedReason || MARKET_CLOSED_TEXT;
     }
-    if (!Number.isFinite(exitQuantity) || exitQuantity <= 0) {
-      return 'Enter a valid quantity to exit.';
+    if (!exitLots || exitLots <= 0) {
+      return 'Enter the number of lots to exit.';
     }
-    if (exitQuantity > maxQuantity) {
-      return `Quantity cannot exceed max available (${maxQuantity}).`;
+    if (exitLots > maxLots) {
+      return `Lots cannot exceed max available (${maxLots}).`;
     }
     if (!isOrderTypeSupported) {
       return 'SL (Limit) exit is not enabled yet. Use Market to continue.';
@@ -178,36 +200,42 @@ const ExitOrderSheet = ({
 
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <p className="text-[#2b3a4a] dark:text-[#e8f3ee] text-sm font-bold">{(order?.units_per_contract || 0) > 0 ? 'Units to Exit' : 'Quantity to Exit'}</p>
-              <p className="text-[#909dab] dark:text-[#9cb7aa] text-xs font-semibold">Max Available: {maxQuantity}</p>
+              <p className="text-[#2b3a4a] dark:text-[#e8f3ee] text-sm font-bold">Lots to Exit</p>
+              <p className="text-[#909dab] dark:text-[#9cb7aa] text-xs font-semibold">Max: {maxLots} lots</p>
             </div>
             <div className="rounded-xl border border-gray-200 dark:border-[#22352d] bg-white dark:bg-[#16231d] p-1.5 flex items-center gap-1.5">
               <input
                 type="number"
                 min="1"
-                max={maxQuantity || undefined}
-                value={quantityInput}
+                max={maxLots || undefined}
+                value={lotsInput}
                 onChange={(e) => {
-                  setQuantityInput(e.target.value);
+                  setLotsInput(e.target.value);
                   setLocalError(null);
                 }}
                 className="flex-1 bg-transparent border-0 outline-none px-2.5 py-2 text-lg sm:text-xl font-bold text-[#111418] dark:text-[#e8f3ee]"
               />
               <button
                 type="button"
-                onClick={setHalfQuantity}
+                onClick={setHalfLots}
                 className="min-w-[56px] sm:min-w-[64px] h-10 rounded-lg border border-gray-200 dark:border-[#22352d] text-xs font-bold text-[#2b3a4a] dark:text-[#9cb7aa] bg-white dark:bg-[#16231d] hover:bg-gray-50 dark:hover:bg-[#1e2f28]"
               >
                 HALF
               </button>
               <button
                 type="button"
-                onClick={setMaxQuantity}
+                onClick={setMaxLots}
                 className="min-w-[56px] sm:min-w-[64px] h-10 rounded-lg border border-orange-200 dark:border-orange-900/40 text-xs font-bold text-[#d66b1b] dark:text-orange-300 bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 dark:hover:bg-orange-900/30"
               >
                 MAX
               </button>
             </div>
+            {exitLots > 0 && (
+              <p className="mt-1.5 text-[10px] text-gray-400 text-center">
+                {exitQuantity} {mcxSpec ? 'units' : 'qty'} ({exitLots} × {lotSize})
+                {mcxSpec?.contract_size ? ` · ${mcxSpec.contract_size}` : ''}
+              </p>
+            )}
           </div>
 
           <div>

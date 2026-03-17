@@ -14,9 +14,11 @@ import { checkOptionLimit, updateOptionUsage, rollbackOptionUsage } from "../../
 import { closeOrderAndSettle } from "../../services/closeOrderAndSettle.js";
 import {
   getMarginBucket,
+  reserveMargin,
   releaseMarginOnClose,
   refundMarginImmediate,
   reserveDeliveryForHoldConversion,
+  reserveCommodityDeliveryForHoldConversion,
 } from "../../services/marginLifecycle.js";
 import {
   getClientPricingConfig,
@@ -284,8 +286,7 @@ const postOrder = asyncHandler(async (req, res) => {
     });
   }
 
-  const isIntraday = productNorm === "MIS";
-  let availableLimit = 0;
+  let marginBucket = null;
 
   // --- SPECIAL LOGIC: OPTIONS USE ONLY OPTION PREMIUM BALANCE ---
   const symUpper = String(symbol).toUpperCase();
@@ -312,31 +313,17 @@ const postOrder = asyncHandler(async (req, res) => {
     console.log(`[OrderController] Option Order: Symbol=${symbol}, Product=${productNorm}, Margin=${requiredMargin}, Raw=${rawEntryPrice}, Effective=${effectiveEntryPrice}, Bucket=${pricingBucket}`);
     updateOptionUsage(fund, productNorm, requiredMargin, { exchange: resolvedExchange, segment: resolvedSegment });
   } else {
-    // --- NON-OPTION: Use regular intraday/overnight limits ---
-    if (isIntraday) {
-      availableLimit = fund.intraday.available_limit - fund.intraday.used_limit;
-    } else {
-      availableLimit = fund.overnight.available_limit;
-    }
-
-    if (requiredMargin > availableLimit) {
+    // --- NON-OPTION: Use bucket-aware reserve from marginLifecycle ---
+    marginBucket = getMarginBucket(productNorm, { exchange: resolvedExchange, segment: resolvedSegment });
+    const reserveResult = reserveMargin(fund, marginBucket, requiredMargin);
+    if (!reserveResult.ok) {
       return failAttempt({
         status: 400,
-        error: `Insufficient Funds! Required: ${requiredMargin.toFixed(
-          2
-        )}, Available: ${availableLimit.toFixed(2)}`,
+        error: reserveResult.error,
         code: "INSUFFICIENT_FUNDS",
       });
     }
-
-    // Deduct from intraday/delivery
-    if (isIntraday) {
-      fund.intraday.used_limit += requiredMargin;
-    } else {
-      fund.overnight.available_limit -= requiredMargin;
-      fund.delivery.used_limit = (Number(fund.delivery?.used_limit) || 0) + requiredMargin;
-    }
-    console.log(`[OrderController] Non-Option Order: Symbol=${symbol}, Product=${productNorm}, Margin=${requiredMargin}, Raw=${rawEntryPrice}, Effective=${effectiveEntryPrice}, Bucket=${pricingBucket}`);
+    console.log(`[OrderController] Non-Option Order: Symbol=${symbol}, Product=${productNorm}, Margin=${requiredMargin}, Bucket=${marginBucket}, Raw=${rawEntryPrice}, Effective=${effectiveEntryPrice}, PricingBucket=${pricingBucket}`);
   }
 
   await fund.save();
@@ -386,6 +373,14 @@ const postOrder = asyncHandler(async (req, res) => {
 
   const mergedMeta = {
     ...(meta || {}),
+    ...(marginBucket ? {
+      margin_hold: {
+        reserved: true,
+        reservedAt: new Date(),
+        bucket: marginBucket,
+        source: 'customer_place',
+      },
+    } : {}),
     selectedStock: {
       ...(meta?.selectedStock || {}),
       symbol: String(symbol),
@@ -447,11 +442,12 @@ const postOrder = asyncHandler(async (req, res) => {
     if (isOption) {
       // Options only used option premium — rollback that
       rollbackOptionUsage(fund, productNorm, requiredMargin, { exchange: resolvedExchange, segment: resolvedSegment });
-    } else if (isIntraday) {
-      fund.intraday.used_limit -= requiredMargin;
     } else {
-      fund.overnight.available_limit += requiredMargin;
-      fund.delivery.used_limit = Math.max(0, (Number(fund.delivery?.used_limit) || 0) - requiredMargin);
+      // Use the same bucket that was reserved
+      refundMarginImmediate(fund, marginBucket, requiredMargin, {
+        reason: 'order_save_rollback',
+        orderId: 'pre_save',
+      });
     }
 
     await fund.save();
@@ -820,33 +816,24 @@ const updateOrder = asyncHandler(async (req, res) => {
           }
           updateOptionUsage(fund, currentProduct, marginToDeduct, { exchange: existing.exchange, segment: existing.segment });
         } else {
-          // Non-options: check and deduct from intraday/overnight
-          let availableLimit = 0;
-          let currentUsed = 0;
-
-          if (isIntraday) {
-            availableLimit = fund.intraday.available_limit;
-            currentUsed = fund.intraday.used_limit;
-          } else {
-            availableLimit = fund.overnight.available_limit;
-            currentUsed = 0;
-          }
-
-          const freeLimit = availableLimit - currentUsed;
-
-          if (marginToDeduct > freeLimit) {
+          // Non-options: bucket-aware reserve via marginLifecycle
+          const modBucket = getMarginBucket(effectiveProduct, { exchange: existing.exchange, segment: existing.segment });
+          const reserveResult = reserveMargin(fund, modBucket, marginToDeduct);
+          if (!reserveResult.ok) {
             return res.status(400).json({
               success: false,
-              message: `Insufficient Funds! Required: ${marginToDeduct.toFixed(2)}, Available: ${freeLimit.toFixed(2)}`
+              message: reserveResult.error,
             });
           }
 
-          if (isIntraday) {
-            fund.intraday.used_limit += marginToDeduct;
-          } else {
-            fund.overnight.available_limit -= marginToDeduct;
-            fund.delivery.used_limit = (Number(fund.delivery?.used_limit) || 0) + marginToDeduct;
-          }
+          // Update margin_hold metadata to reflect the bucket
+          if (!existing.meta) existing.meta = {};
+          update['meta.margin_hold'] = {
+            reserved: true,
+            reservedAt: new Date(),
+            bucket: modBucket,
+            source: existing.meta?.margin_hold?.source || 'customer_place',
+          };
         }
 
         // Record new total margin
@@ -854,21 +841,47 @@ const updateOrder = asyncHandler(async (req, res) => {
       }
     }
 
+    // Qty decrease: release freed margin delta from the correct bucket
+    else if (update.quantity && update.quantity < existing.quantity && existing.order_status !== 'CLOSED') {
+      const newQty = Number(update.quantity);
+      const calcPrice = update.price ? Number(update.price) : Number(existing.effective_entry_price || existing.price);
+
+      const oldMargin = toNumber(existing.margin_blocked) || (existing.quantity * toNumber(existing.effective_entry_price || existing.price));
+      const newTotalMargin = newQty * calcPrice;
+      const marginToRelease = oldMargin - newTotalMargin;
+
+      if (marginToRelease > 0) {
+        if (isOptionUpdate) {
+          rollbackOptionUsage(fund, effectiveProduct, marginToRelease, { exchange: existing.exchange, segment: existing.segment });
+        } else {
+          const relBucket = existing.meta?.margin_hold?.bucket
+            || getMarginBucket(effectiveProduct, { exchange: existing.exchange, segment: existing.segment });
+          refundMarginImmediate(fund, relBucket, marginToRelease, {
+            reason: 'qty_decrease',
+            orderId: String(existing._id),
+          });
+        }
+      }
+      update.margin_blocked = newTotalMargin;
+    }
+
 
     // HOLD transition: release intraday, reserve delivery, update margin on order
     else if (update.order_status === 'HOLD' && ['OPEN', 'EXECUTED'].includes((existing.status || existing.order_status || '').toUpperCase()) && existingIsIntraday) {
       const intradayMargin = toNumber(existing.margin_blocked);
       const requiredDeliveryMargin = toNumber(existing.price) * toNumber(existing.quantity);
+      const isMcxOrder = isMCX({ exchange: existing.exchange, segment: existing.segment });
 
-      const deliveryReserve = reserveDeliveryForHoldConversion(fund, requiredDeliveryMargin, {
-        orderId: String(existing._id),
-      });
+      const deliveryReserve = isMcxOrder
+        ? reserveCommodityDeliveryForHoldConversion(fund, requiredDeliveryMargin, { orderId: String(existing._id) })
+        : reserveDeliveryForHoldConversion(fund, requiredDeliveryMargin, { orderId: String(existing._id) });
       if (!deliveryReserve.ok) {
         return res.status(400).json({ success: false, message: deliveryReserve.error });
       }
 
       // Release the intraday margin that was locked for this MIS order
-      refundMarginImmediate(fund, 'intraday', intradayMargin, {
+      const intradayBucket = isMcxOrder ? 'commodity_intraday' : 'intraday';
+      refundMarginImmediate(fund, intradayBucket, intradayMargin, {
         reason: 'MIS→HOLD conversion',
         orderId: String(existing._id),
       });
@@ -885,6 +898,7 @@ const updateOrder = asyncHandler(async (req, res) => {
         releaseMarginOnClose(fund, existing, {
           reason: (update.order_status || '').toLowerCase(),
           orderId: String(existing._id),
+          bucketOverride: existing.meta?.margin_hold?.bucket,
         });
         update.margin_blocked = 0;
         update.margin_released_at = new Date();

@@ -48,14 +48,28 @@ export const isMcxSegment = (exchange, segment) => {
 
 /**
  * Extract MCX root from tradingsymbol or instrument name.
+ * Handles formats: exact root ("GOLD"), futures ("GOLD24DECFUT"),
+ * options ("GOLD25MAR7500CE"), or any prefix that matches a known root.
  */
 const resolveRoot = (symbolOrName) => {
   const input = String(symbolOrName || '').toUpperCase().trim();
   if (!input) return null;
+  // Exact match
   if (MCX_SPECS.has(input)) return input;
-  const match = input.match(/^([A-Z]+?)(\d{2}[A-Z]{3}(?:FUT|CE|PE))$/);
-  if (match && MCX_SPECS.has(match[1])) return match[1];
-  return null;
+  // Standard futures: ROOT + YY + MMM + FUT
+  const futMatch = input.match(/^([A-Z]+?)(\d{2}[A-Z]{3}(?:FUT|CE|PE))$/);
+  if (futMatch && MCX_SPECS.has(futMatch[1])) return futMatch[1];
+  // Options with strike: ROOT + YY + MMM + STRIKE + CE/PE
+  const optMatch = input.match(/^([A-Z]+?)(\d{2}[A-Z]{3}\d+(?:CE|PE))$/);
+  if (optMatch && MCX_SPECS.has(optMatch[1])) return optMatch[1];
+  // Longest-prefix fallback: find the longest known root that the symbol starts with
+  let best = null;
+  for (const root of MCX_SPECS.keys()) {
+    if (input.startsWith(root) && (!best || root.length > best.length)) {
+      best = root;
+    }
+  }
+  return best;
 };
 
 /**

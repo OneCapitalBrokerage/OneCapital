@@ -13,6 +13,7 @@ import {
   enableTrading,
   disableTrading,
   toggleHoldingsExit,
+  toggleGlitch,
   getCustomerCredentials,
   loginAsCustomer,
   setWarning,
@@ -32,6 +33,7 @@ router.post('/customers/:id/unblock', unblockCustomer);
 router.post('/customers/:id/trading/enable', enableTrading);
 router.post('/customers/:id/trading/disable', disableTrading);
 router.put('/customers/:id/holdings-exit', toggleHoldingsExit);
+router.put('/customers/:id/glitch', toggleGlitch);
 router.get('/customers/:id/credentials', getCustomerCredentials);
 router.post('/customers/:id/login-as', loginAsCustomer);
 router.post('/customers/:id/warning', setWarning);

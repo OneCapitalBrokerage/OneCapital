@@ -44,8 +44,10 @@ export const checkOptionLimit = (fund, product, requiredMargin, { exchange, segm
     // MCX commodity options use separate commodity_option bucket
     if (mcx) {
         const limitPercent = fund.commodity_option?.limit_percentage ?? 10;
-        const commodityAvailable = nonNegative(fund.commodity_delivery?.available_limit);
-        const dailyCap = commodityAvailable * (limitPercent / 100);
+        const commodityIntradayAvailable = nonNegative(fund.commodity_intraday?.available_limit);
+        const commodityDeliveryAvailable = nonNegative(fund.commodity_delivery?.available_limit);
+        const commodityBase = commodityIntradayAvailable + commodityDeliveryAvailable;
+        const dailyCap = commodityBase * (limitPercent / 100);
         const used = nonNegative(fund.commodity_option?.used);
 
         if ((used + requiredMargin) > dailyCap) {

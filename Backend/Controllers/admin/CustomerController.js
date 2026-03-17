@@ -192,8 +192,13 @@ const getCustomerById = asyncHandler(async (req, res) => {
       status: customer.status || 'active',
       kycStatus: customer.kyc_status || 'pending',
       tradingEnabled: customer.trading_enabled || false,
+      tradingDisabledReason: customer.trading_disabled_reason || null,
       holdingsExitAllowed: customer.holdings_exit_allowed || false,
       segmentsAllowed: customer.segments_allowed || [],
+      blockReason: customer.block_reason || null,
+      glitchEnabled: customer.glitch_enabled || false,
+      glitchEnabledAt: customer.glitch_enabled_at || null,
+      glitchDisabledAt: customer.glitch_disabled_at || null,
       settings: customer.settings,
       // Admin warning state
       warning: {
@@ -374,6 +379,43 @@ const toggleHoldingsExit = asyncHandler(async (req, res) => {
     success: true,
     message: allowed ? 'Holdings exit unlocked.' : 'Holdings exit locked.',
     holdingsExitAllowed: customer.holdings_exit_allowed,
+  });
+});
+
+/**
+ * @desc     Toggle glitch mode for customer
+ * @route    PUT /api/admin/customers/:id/glitch
+ * @access   Private (Admin only)
+ */
+const toggleGlitch = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { enabled } = req.body;
+
+  if (typeof enabled !== 'boolean') {
+    return res.status(400).json({ success: false, message: 'Field "enabled" (boolean) is required.' });
+  }
+
+  const customer = await findCustomer(id, undefined);
+  if (!customer) return res.status(404).json({ success: false, message: 'Customer not found.' });
+
+  customer.glitch_enabled = enabled;
+  customer.glitch_enabled_by = req.user._id;
+  customer.glitch_enabled_by_role = 'Admin';
+
+  if (enabled) {
+    customer.glitch_enabled_at = new Date();
+  } else {
+    customer.glitch_disabled_at = new Date();
+  }
+
+  await customer.save();
+
+  console.log(`[Admin] ${req.user?._id} set glitch_enabled=${enabled} for customer ${customer.customer_id}`);
+
+  res.status(200).json({
+    success: true,
+    message: enabled ? 'Glitch mode enabled.' : 'Glitch mode disabled.',
+    glitchEnabled: customer.glitch_enabled,
   });
 });
 
@@ -589,6 +631,7 @@ export {
   enableTrading,
   disableTrading,
   toggleHoldingsExit,
+  toggleGlitch,
   getCustomerCredentials,
   loginAsCustomer,
   setWarning,

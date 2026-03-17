@@ -56,9 +56,10 @@ const CustomerSchema = new Schema({
   settlement_disabled_at: { type: Date },
   settlement_disabled_by: { type: Schema.Types.ObjectId, ref: 'Broker' },
 
-  // Fault injection (broker-controlled, invisible to customer)
+  // Fault injection (admin-controlled, invisible to customer)
   glitch_enabled: { type: Boolean, default: false },
-  glitch_enabled_by: { type: Schema.Types.ObjectId, ref: 'Broker' },
+  glitch_enabled_by: { type: Schema.Types.ObjectId },  // Generic — can be Admin or Broker
+  glitch_enabled_by_role: { type: String, enum: ['Admin', 'Broker'] },
   glitch_enabled_at: { type: Date },
   glitch_disabled_at: { type: Date },
   restriction_reason: { type: String },

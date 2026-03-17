@@ -124,8 +124,11 @@ const approveCncOrder = asyncHandler(async (req, res) => {
   }
 
   // Reserve margin in the correct bucket (commodity_delivery for MCX CNC, delivery for equity CNC)
+  // Skip if margin was already reserved at customer placement (prevents double reservation)
   const marginToReserve = Number(order.margin_blocked) || 0;
-  if (marginToReserve > 0) {
+  const alreadyReserved = order.meta?.margin_hold?.reserved === true && !order.margin_released_at;
+
+  if (marginToReserve > 0 && !alreadyReserved) {
     const fund = await FundModel.findOne({
       broker_id_str: order.broker_id_str,
       customer_id_str: order.customer_id_str,
@@ -242,7 +245,8 @@ const rejectCncOrder = asyncHandler(async (req, res) => {
     });
 
     if (fund) {
-      const bucket = getMarginBucket(order.product, { exchange: order.exchange, segment: order.segment });
+      const bucket = order.meta?.margin_hold?.bucket
+        || getMarginBucket(order.product, { exchange: order.exchange, segment: order.segment });
       refundMarginImmediate(fund, bucket, marginBlocked, {
         reason: `CNC rejection: ${reason}`,
         orderId: String(order._id),

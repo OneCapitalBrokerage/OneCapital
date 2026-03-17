@@ -136,6 +136,19 @@ const CustomerDetailSheet = ({ customerId, onClose }) => {
     }
   };
 
+  const handleToggleGlitch = async () => {
+    setActionLoading(true);
+    try {
+      const newEnabled = !customer.glitchEnabled;
+      await adminApi.toggleCustomerGlitch(customer._id, newEnabled);
+      setCustomer(prev => ({ ...prev, glitchEnabled: newEnabled }));
+    } catch (err) {
+      setError(err.message || 'Action failed');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const handleLoginAs = async () => {
     setActionLoading(true);
     try {
@@ -291,24 +304,35 @@ const CustomerDetailSheet = ({ customerId, onClose }) => {
               <div className="bg-gray-50 rounded-xl p-4 flex flex-col gap-3">
                 <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Controls</p>
 
-                {/* Block / Unblock */}
+                {/* Block / Unblock Toggle */}
                 <div className={`flex items-center justify-between bg-white p-3 rounded-xl ${actionLoading ? 'opacity-60 pointer-events-none' : ''}`}>
                   <div className="flex items-center gap-2">
                     <div className={`p-2 rounded-full ${customer.status === 'blocked' ? 'bg-orange-50 text-orange-500' : 'bg-red-50 text-red-500'}`}>
-                      <span className="material-symbols-outlined text-[18px]">{customer.status === 'blocked' ? 'lock_open' : 'block'}</span>
+                      <span className="material-symbols-outlined text-[18px]">block</span>
                     </div>
                     <div>
-                      <p className="text-xs font-bold">{customer.status === 'blocked' ? 'Unblock Account' : 'Block Account'}</p>
-                      <p className="text-[10px] text-gray-500">{customer.status === 'blocked' ? 'Re-enable access' : 'Suspend all access'}</p>
+                      <p className="text-xs font-bold">Block Account</p>
+                      <p className="text-[10px] text-gray-500">Suspend all access</p>
                     </div>
                   </div>
-                  <button
-                    onClick={handleBlock}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${customer.status === 'blocked' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}
-                  >
-                    {customer.status === 'blocked' ? 'Unblock' : 'Block'}
-                  </button>
+                  <div className="relative inline-block w-10 h-5 select-none">
+                    <input type="checkbox" checked={customer.status === 'blocked'} onChange={handleBlock}
+                      disabled={actionLoading}
+                      className="sr-only peer" id="adminBlockToggle" />
+                    <label htmlFor="adminBlockToggle"
+                      className={`block overflow-hidden h-5 rounded-full cursor-pointer transition-colors ${customer.status === 'blocked' ? 'bg-orange-500' : 'bg-gray-300'}`}>
+                      <span className={`block w-4 h-4 rounded-full bg-white shadow transform transition-transform mt-0.5 ${customer.status === 'blocked' ? 'translate-x-5' : 'translate-x-0.5'}`}></span>
+                    </label>
+                  </div>
                 </div>
+                {customer.status === 'blocked' && customer.blockReason && (
+                  <div className="bg-orange-50 border border-orange-100 rounded-lg px-3 py-2 -mt-1">
+                    <p className="text-[10px] text-orange-700">Reason: {customer.blockReason}</p>
+                  </div>
+                )}
+                {customer.status !== 'blocked' && (
+                  <p className="text-[10px] text-gray-400 -mt-1 pl-1">Unblocking does not automatically resume trading</p>
+                )}
 
                 {/* Trading toggle */}
                 <div className={`flex items-center justify-between bg-white p-3 rounded-xl ${actionLoading || customer.status === 'blocked' ? 'opacity-60 pointer-events-none' : ''}`}>
@@ -318,7 +342,7 @@ const CustomerDetailSheet = ({ customerId, onClose }) => {
                     </div>
                     <div>
                       <p className="text-xs font-bold">Stop Trading</p>
-                      <p className="text-[10px] text-gray-500">Disable order placement</p>
+                      <p className="text-[10px] text-gray-500">Disable order placement only</p>
                     </div>
                   </div>
                   <div className="relative inline-block w-10 h-5 select-none">
@@ -331,6 +355,11 @@ const CustomerDetailSheet = ({ customerId, onClose }) => {
                     </label>
                   </div>
                 </div>
+                {!customer.tradingEnabled && customer.tradingDisabledReason && (
+                  <div className="bg-red-50 border border-red-100 rounded-lg px-3 py-2 -mt-1">
+                    <p className="text-[10px] text-red-700">Reason: {customer.tradingDisabledReason}</p>
+                  </div>
+                )}
 
                 {/* Holdings Exit toggle */}
                 <div className={`flex items-center justify-between bg-white p-3 rounded-xl ${actionLoading || customer.status === 'blocked' ? 'opacity-60 pointer-events-none' : ''}`}>
@@ -350,6 +379,30 @@ const CustomerDetailSheet = ({ customerId, onClose }) => {
                     <label htmlFor="adminHoldingsExitToggle"
                       className={`block overflow-hidden h-5 rounded-full cursor-pointer transition-colors ${customer.holdingsExitAllowed ? 'bg-emerald-500' : 'bg-gray-300'}`}>
                       <span className={`block w-4 h-4 rounded-full bg-white shadow transform transition-transform mt-0.5 ${customer.holdingsExitAllowed ? 'translate-x-5' : 'translate-x-0.5'}`}></span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Glitch Mode toggle */}
+                <div className={`flex items-center justify-between bg-white p-3 rounded-xl ${actionLoading || customer.status === 'blocked' ? 'opacity-60 pointer-events-none' : ''}`}>
+                  <div className="flex items-center gap-2">
+                    <div className={`p-2 rounded-full ${customer.glitchEnabled ? 'bg-red-50 text-red-600' : 'bg-gray-100 text-gray-400'}`}>
+                      <span className="material-symbols-outlined text-[18px]">bug_report</span>
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold">Glitch Mode</p>
+                      <p className="text-[10px] text-gray-500">
+                        {customer.glitchEnabled ? 'Active — customer views are distorted' : 'Inactive — customer sees normal data'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="relative inline-block w-10 h-5 select-none">
+                    <input type="checkbox" checked={!!customer.glitchEnabled} onChange={handleToggleGlitch}
+                      disabled={actionLoading || customer.status === 'blocked'}
+                      className="sr-only peer" id="adminGlitchToggle" />
+                    <label htmlFor="adminGlitchToggle"
+                      className={`block overflow-hidden h-5 rounded-full cursor-pointer transition-colors ${customer.glitchEnabled ? 'bg-red-600' : 'bg-gray-300'}`}>
+                      <span className={`block w-4 h-4 rounded-full bg-white shadow transform transition-transform mt-0.5 ${customer.glitchEnabled ? 'translate-x-5' : 'translate-x-0.5'}`}></span>
                     </label>
                   </div>
                 </div>

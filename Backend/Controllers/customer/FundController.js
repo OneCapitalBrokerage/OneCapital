@@ -287,6 +287,7 @@ const getBalance = asyncHandler(async (req, res) => {
         delivery: { available: 0, used: 0, remaining: 0 },
         optionPremium: { percent: 10, base: 0, limit: 0, used: 0, remaining: 0 },
         commodityDelivery: { available: 0, used: 0, remaining: 0 },
+        commodityIntraday: { available: 0, used: 0, remaining: 0 },
         commodityOptionPremium: { percent: 10, base: 0, limit: 0, used: 0, remaining: 0 },
       },
       summary: {
@@ -336,9 +337,12 @@ const getBalance = asyncHandler(async (req, res) => {
   const optionRemaining = Math.max(0, optionLimit - optionUsed);
   const commodityDeliveryAvailable = toNumber(fund.commodity_delivery?.available_limit);
   const commodityDeliveryUsed = toNumber(fund.commodity_delivery?.used_limit);
+  const commodityIntradayAvailable = toNumber(fund.commodity_intraday?.available_limit);
+  const commodityIntradayUsed = toNumber(fund.commodity_intraday?.used_limit);
   const commodityOptionPercent = toNumber(fund.commodity_option?.limit_percentage) || 10;
   const commodityOptionUsed = toNumber(fund.commodity_option?.used);
-  const commodityOptionLimit = Math.round((commodityDeliveryAvailable * (commodityOptionPercent / 100)) * 100) / 100;
+  const commodityOptionBase = commodityIntradayAvailable + commodityDeliveryAvailable;
+  const commodityOptionLimit = Math.round((commodityOptionBase * (commodityOptionPercent / 100)) * 100) / 100;
   const commodityOptionRemaining = Math.max(0, commodityOptionLimit - commodityOptionUsed);
 
   // Calculate pay-in summary from approved/completed withdrawals in the current
@@ -445,9 +449,14 @@ const getBalance = asyncHandler(async (req, res) => {
         used: commodityDeliveryUsed,
         remaining: Math.max(0, commodityDeliveryAvailable - commodityDeliveryUsed),
       },
+      commodityIntraday: {
+        available: commodityIntradayAvailable,
+        used: commodityIntradayUsed,
+        remaining: Math.max(0, commodityIntradayAvailable - commodityIntradayUsed),
+      },
       commodityOptionPremium: {
         percent: commodityOptionPercent,
-        base: commodityDeliveryAvailable,
+        base: commodityOptionBase,
         limit: commodityOptionLimit,
         used: commodityOptionUsed,
         remaining: commodityOptionRemaining,

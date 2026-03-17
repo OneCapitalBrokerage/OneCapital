@@ -1,3 +1,6 @@
+import { useState } from 'react';
+import LegalBottomSheet from '../../../components/shared/LegalBottomSheet';
+
 const Row = ({ label, value }) =>
   value ? (
     <div className="flex items-start justify-between gap-2 py-1.5">
@@ -34,15 +37,32 @@ const DOC_LABELS = {
   aadhaarBack: 'Aadhaar Back',
 };
 
+const InlineLegalButton = ({ children, onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className="font-semibold text-[#137fec] underline decoration-[#137fec]/40 underline-offset-2 transition-colors hover:text-[#0f73d6]"
+  >
+    {children}
+  </button>
+);
+
 const Step6Review = ({ data, onUpdate, onGoToStep }) => {
   const docs = data.documents || {};
   const bankDetails = data.bank_details || {};
   const identityDocKeys = ['panCard', 'aadhaarFront', 'aadhaarBack'];
   const uploadedDocs = identityDocKeys.filter((key) => docs[key]?.url);
+  const [activeLegalDocument, setActiveLegalDocument] = useState(null);
   const maskedAccount =
     bankDetails.account_number && bankDetails.account_number.length >= 4
       ? `****${bankDetails.account_number.slice(-4)}`
       : bankDetails.account_number;
+
+  const openLegalDocument = (documentKey) => (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setActiveLegalDocument(documentKey);
+  };
 
   return (
     <div className="flex flex-col gap-3">
@@ -109,27 +129,49 @@ const Step6Review = ({ data, onUpdate, onGoToStep }) => {
 
       {/* Consent checkboxes */}
       <div className="flex flex-col gap-3 mt-1">
-        {[
-          {
-            key: 'terms_agreed',
-            text: 'I confirm all information is accurate and matches my official KYC documents.',
-          },
-          {
-            key: 'data_consent',
-            text: 'I agree to the Terms of Service, Privacy Policy, and consent to processing of my personal data for account opening.',
-          },
-        ].map(({ key, text }) => (
-          <label key={key} className="flex items-start gap-2.5 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={!!data[key]}
-              onChange={(e) => onUpdate({ [key]: e.target.checked })}
-              className="w-4 h-4 mt-0.5 rounded border-gray-300 text-[#137fec] focus:ring-[#137fec] shrink-0"
-            />
-            <span className="text-[11px] sm:text-xs text-gray-600 leading-relaxed">{text}</span>
+        <div className="flex items-start gap-2.5">
+          <input
+            id="review-terms-agreed"
+            type="checkbox"
+            checked={!!data.terms_agreed}
+            onChange={(e) => onUpdate({ terms_agreed: e.target.checked })}
+            className="w-4 h-4 mt-0.5 rounded border-gray-300 text-[#137fec] focus:ring-[#137fec] shrink-0"
+          />
+          <label htmlFor="review-terms-agreed" className="cursor-pointer text-[11px] sm:text-xs text-gray-600 leading-relaxed">
+            I confirm all information is accurate and matches my official KYC documents.
           </label>
-        ))}
+        </div>
+
+        <div className="flex items-start gap-2.5">
+          <input
+            id="review-data-consent"
+            type="checkbox"
+            checked={!!data.data_consent}
+            onChange={(e) => onUpdate({ data_consent: e.target.checked })}
+            className="w-4 h-4 mt-0.5 rounded border-gray-300 text-[#137fec] focus:ring-[#137fec] shrink-0"
+          />
+
+          <div className="text-[11px] sm:text-xs text-gray-600 leading-relaxed">
+            <label htmlFor="review-data-consent" className="cursor-pointer">
+              I agree to the{' '}
+            </label>
+            <InlineLegalButton onClick={openLegalDocument('terms')}>Terms & Conditions</InlineLegalButton>
+            <label htmlFor="review-data-consent" className="cursor-pointer">
+              {' '}and{' '}
+            </label>
+            <InlineLegalButton onClick={openLegalDocument('privacy')}>Privacy Policy</InlineLegalButton>
+            <label htmlFor="review-data-consent" className="cursor-pointer">
+              , and consent to processing of my personal data for account opening.
+            </label>
+          </div>
+        </div>
       </div>
+
+      <LegalBottomSheet
+        isOpen={!!activeLegalDocument}
+        defaultDocumentKey={activeLegalDocument || 'terms'}
+        onClose={() => setActiveLegalDocument(null)}
+      />
     </div>
   );
 };

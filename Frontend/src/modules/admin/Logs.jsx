@@ -61,6 +61,7 @@ const Logs = () => {
   const [loading, setLoading] = useState(true);
   const [clearing, setClearing] = useState(false);
   const [error, setError] = useState(null);
+  const [successMessage, setSuccessMessage] = useState(null);
   const [showClearMenu, setShowClearMenu] = useState(false);
   const [clearConfirm, setClearConfirm] = useState(null);
   const [logs, setLogs] = useState([]);
@@ -171,6 +172,12 @@ const Logs = () => {
     else fetchAlerts();
   }, [viewMode, fetchLogs, fetchAlerts]);
 
+  useEffect(() => {
+    if (!successMessage) return;
+    const timer = setTimeout(() => setSuccessMessage(null), 4000);
+    return () => clearTimeout(timer);
+  }, [successMessage]);
+
   const refreshCurrentView = useCallback(() => {
     if (viewMode === 'events') fetchLogs();
     else fetchAlerts();
@@ -196,16 +203,20 @@ const Logs = () => {
   const executeClearLogs = async (period) => {
     setClearing(true);
     setError(null);
-    setClearConfirm(null);
+    setSuccessMessage(null);
     try {
-      await adminApi.clearLogs('all', period);
-      setLogs([]);
-      setAlerts([]);
-      setAlertStats(null);
+      const result = await adminApi.clearLogs('all', period);
+      setClearConfirm(null);
       setCurrentPage(1);
-      setTotalPages(1);
+      refreshCurrentView();
+      const deleted = result?.deleted;
+      const parts = [];
+      if (deleted?.events) parts.push(`${deleted.events} event${deleted.events !== 1 ? 's' : ''}`);
+      if (deleted?.alerts) parts.push(`${deleted.alerts} alert${deleted.alerts !== 1 ? 's' : ''}`);
+      setSuccessMessage(parts.length ? `Cleared ${parts.join(' and ')}` : 'Logs cleared successfully');
     } catch (err) {
       console.error('Failed to clear logs:', err);
+      setClearConfirm(null);
       setError(err.message || 'Failed to clear logs');
     } finally {
       setClearing(false);
@@ -459,9 +470,6 @@ const Logs = () => {
 
   return (
     <div className="relative flex h-full min-h-screen min-h-[100dvh] w-full flex-col max-w-md mx-auto bg-[#f6f7f8] overflow-x-hidden pb-20 sm:pb-24">
-      {showClearMenu && (
-        <div className="fixed inset-0 z-40" onClick={() => setShowClearMenu(false)} />
-      )}
       <header className="sticky top-0 z-20 bg-white border-b border-gray-200 px-3 sm:px-4 py-2.5 sm:py-3 shadow-sm">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2.5 sm:gap-3">
@@ -488,6 +496,9 @@ const Logs = () => {
               <span className="material-symbols-outlined text-[20px] sm:text-[22px]">refresh</span>
             </button>
             <div className="relative">
+              {showClearMenu && (
+                <div className="fixed inset-0 z-40" onClick={() => setShowClearMenu(false)} />
+              )}
               <button
                 onClick={() => setShowClearMenu((prev) => !prev)}
                 disabled={clearing || loading}
@@ -596,6 +607,13 @@ const Logs = () => {
         {error && (
           <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-lg text-sm">
             {error}
+          </div>
+        )}
+
+        {successMessage && (
+          <div className="mb-4 p-3 bg-green-50 text-green-700 rounded-lg text-sm flex items-center gap-2">
+            <span className="material-symbols-outlined text-[16px]">check_circle</span>
+            {successMessage}
           </div>
         )}
 
@@ -787,7 +805,7 @@ const Logs = () => {
       {clearConfirm && (
         <div
           className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
-          onClick={() => setClearConfirm(null)}
+          onClick={() => !clearing && setClearConfirm(null)}
         >
           <div
             className="bg-white w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl shadow-xl overflow-hidden"
@@ -826,13 +844,15 @@ const Logs = () => {
             <div className="px-5 pb-6 pt-1 flex gap-3">
               <button
                 onClick={() => setClearConfirm(null)}
-                className="flex-1 h-11 bg-gray-100 text-[#111418] rounded-xl font-bold text-sm"
+                disabled={clearing}
+                className="flex-1 h-11 bg-gray-100 text-[#111418] rounded-xl font-bold text-sm disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={() => executeClearLogs(clearConfirm.period)}
-                className={`flex-1 h-11 text-white rounded-xl font-bold text-sm ${clearConfirm.period === 'all' ? 'bg-red-500 hover:bg-red-600' : 'bg-amber-500 hover:bg-amber-600'}`}
+                disabled={clearing}
+                className={`flex-1 h-11 text-white rounded-xl font-bold text-sm disabled:opacity-60 ${clearConfirm.period === 'all' ? 'bg-red-500 hover:bg-red-600' : 'bg-amber-500 hover:bg-amber-600'}`}
               >
                 {clearing ? 'Deleting...' : 'Delete'}
               </button>

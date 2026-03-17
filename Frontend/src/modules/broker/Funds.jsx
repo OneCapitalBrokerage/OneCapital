@@ -51,6 +51,12 @@ const mapBalance = (response) => {
   const commodityDeliveryUsed = clampNonNegative(
     funds.commodityDeliveryUsed ?? balance.commodityDelivery?.used ?? data.commodityDeliveryUsed
   );
+  const commodityIntradayAvailable = clampNonNegative(
+    funds.commodityIntradayAvailable ?? balance.commodityIntraday?.available ?? data.commodityIntradayAvailable
+  );
+  const commodityIntradayUsed = clampNonNegative(
+    funds.commodityIntradayUsed ?? balance.commodityIntraday?.used ?? data.commodityIntradayUsed
+  );
   const commodityOptionLimitPercent = clampNonNegative(
     funds.commodityOptionLimitPercent ?? balance.commodityOption?.percentage ?? DEFAULT_OPTION_CHAIN_PERCENT
   );
@@ -66,6 +72,8 @@ const mapBalance = (response) => {
     optionChainLimitPercent,
     commodityDeliveryAvailable,
     commodityDeliveryUsed,
+    commodityIntradayAvailable,
+    commodityIntradayUsed,
     commodityOptionLimitPercent,
   };
 };
@@ -86,6 +94,7 @@ const Funds = () => {
     longTermAvailable: '',
     optionLimitPercentage: '',
     commodityDeliveryAvailable: '',
+    commodityIntradayAvailable: '',
     commodityOptionLimitPercentage: '',
   });
   const [baseline, setBaseline] = useState(null);
@@ -116,6 +125,7 @@ const Funds = () => {
         longTermAvailable: String(snapshot.longTermAvailable),
         optionLimitPercentage: String(snapshot.optionChainLimitPercent),
         commodityDeliveryAvailable: String(snapshot.commodityDeliveryAvailable),
+        commodityIntradayAvailable: String(snapshot.commodityIntradayAvailable),
         commodityOptionLimitPercentage: String(snapshot.commodityOptionLimitPercent),
       });
       setNote('');
@@ -128,6 +138,7 @@ const Funds = () => {
         longTermAvailable: '',
         optionLimitPercentage: '',
         commodityDeliveryAvailable: '',
+        commodityIntradayAvailable: '',
         commodityOptionLimitPercentage: '',
       });
     } finally {
@@ -161,9 +172,9 @@ const Funds = () => {
 
   const commodityOptionPreview = useMemo(() => {
     const pct = clampNonNegative(form.commodityOptionLimitPercentage);
-    const commodityBase = clampNonNegative(form.commodityDeliveryAvailable);
+    const commodityBase = clampNonNegative(form.commodityIntradayAvailable) + clampNonNegative(form.commodityDeliveryAvailable);
     return Number(((commodityBase * pct) / 100).toFixed(2));
-  }, [form.commodityDeliveryAvailable, form.commodityOptionLimitPercentage]);
+  }, [form.commodityIntradayAvailable, form.commodityDeliveryAvailable, form.commodityOptionLimitPercentage]);
 
   const hasChanges = useMemo(() => {
     if (!baseline) return false;
@@ -173,6 +184,7 @@ const Funds = () => {
       clampNonNegative(form.longTermAvailable) !== baseline.longTermAvailable ||
       clampNonNegative(form.optionLimitPercentage) !== baseline.optionChainLimitPercent ||
       clampNonNegative(form.commodityDeliveryAvailable) !== baseline.commodityDeliveryAvailable ||
+      clampNonNegative(form.commodityIntradayAvailable) !== baseline.commodityIntradayAvailable ||
       clampNonNegative(form.commodityOptionLimitPercentage) !== baseline.commodityOptionLimitPercent
     );
   }, [form, baseline]);
@@ -196,6 +208,7 @@ const Funds = () => {
       longTermAvailable: String(baseline.longTermAvailable),
       optionLimitPercentage: String(baseline.optionChainLimitPercent),
       commodityDeliveryAvailable: String(baseline.commodityDeliveryAvailable),
+      commodityIntradayAvailable: String(baseline.commodityIntradayAvailable),
       commodityOptionLimitPercentage: String(baseline.commodityOptionLimitPercent),
     });
     setNote('');
@@ -215,6 +228,7 @@ const Funds = () => {
       longTermAvailable: clampNonNegative(form.longTermAvailable),
       optionLimitPercentage: clampNonNegative(form.optionLimitPercentage),
       commodityDeliveryAvailable: clampNonNegative(form.commodityDeliveryAvailable),
+      commodityIntradayAvailable: clampNonNegative(form.commodityIntradayAvailable),
       commodityOptionLimitPercentage: clampNonNegative(form.commodityOptionLimitPercentage),
       note: note.trim(),
     };
@@ -232,6 +246,7 @@ const Funds = () => {
         longTermAvailable: String(nextSnapshot.longTermAvailable),
         optionLimitPercentage: String(nextSnapshot.optionChainLimitPercent),
         commodityDeliveryAvailable: String(nextSnapshot.commodityDeliveryAvailable),
+        commodityIntradayAvailable: String(nextSnapshot.commodityIntradayAvailable),
         commodityOptionLimitPercentage: String(nextSnapshot.commodityOptionLimitPercent),
       });
       setNote('');
@@ -412,6 +427,17 @@ const Funds = () => {
                   </div>
 
                   <label className="rounded-xl border border-gray-200 p-3">
+                    <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Commodities Intraday Margin</p>
+                    <input
+                      type="number"
+                      min="0"
+                      value={form.commodityIntradayAvailable}
+                      onChange={(e) => handleFieldChange('commodityIntradayAvailable', e.target.value)}
+                      className="w-full bg-transparent text-lg font-bold text-[#111418] outline-none"
+                    />
+                  </label>
+
+                  <label className="rounded-xl border border-gray-200 p-3">
                     <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Commodities Delivery Margin</p>
                     <input
                       type="number"
@@ -440,7 +466,7 @@ const Funds = () => {
                       {formatCurrency(commodityOptionPreview)}
                     </p>
                     <p className="text-[10px] text-[#617589]">
-                      {clampNonNegative(form.commodityOptionLimitPercentage)}% of commodities delivery margin.
+                      {clampNonNegative(form.commodityOptionLimitPercentage)}% of commodities intraday + delivery margin.
                     </p>
                   </div>
                 </div>
@@ -466,6 +492,9 @@ const Funds = () => {
                   </p>
                   <p className="text-xs text-[#617589]">
                     Existing Option %: <span className="font-semibold text-[#111418]">{clampNonNegative(baseline?.optionChainLimitPercent || 0)}%</span>
+                  </p>
+                  <p className="text-xs text-[#617589]">
+                    Commodities Intraday Used: <span className="font-semibold text-[#111418]">{formatCurrency(baseline?.commodityIntradayUsed || 0)}</span>
                   </p>
                   <p className="text-xs text-[#617589]">
                     Commodities Delivery Used: <span className="font-semibold text-[#111418]">{formatCurrency(baseline?.commodityDeliveryUsed || 0)}</span>

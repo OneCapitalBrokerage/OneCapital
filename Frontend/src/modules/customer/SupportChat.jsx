@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import customerApi from '../../api/customer';
 import { useAuth } from '../../context/AuthContext';
@@ -51,9 +51,15 @@ const formatFileSize = (bytes) => {
 };
 
 const SupportChat = () => {
+  const location = useLocation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { user } = useAuth();
+  const backTo = typeof location.state?.backTo === 'string' ? location.state.backTo : null;
+
+  const handleBackToHelp = useCallback(() => {
+    navigate('/support', backTo ? { replace: true, state: { backTo } } : { replace: true });
+  }, [backTo, navigate]);
   
   // Session state
   const [session, setSession] = useState(null);
@@ -327,7 +333,7 @@ const SupportChat = () => {
   if (sessionClosed) {
     return (
       <div className="min-h-screen bg-background-light dark:bg-[#050806]">
-        <TopHeader title="Support Chat" showBack={true} onBack={() => navigate('/support')} />
+        <TopHeader title="Support Chat" showBack={true} onBackClick={handleBackToHelp} />
         <div className="flex flex-col items-center justify-center p-8 text-center h-[calc(100vh-60px)]">
           <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center mb-4">
             <span className="material-symbols-outlined text-3xl text-red-600 dark:text-red-400">
@@ -361,7 +367,7 @@ const SupportChat = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-background-light dark:bg-[#050806]">
-        <TopHeader title="Support Chat" showBack={true} onBack={() => navigate('/support')} />
+        <TopHeader title="Support Chat" showBack={true} onBackClick={handleBackToHelp} />
         <div className="flex items-center justify-center h-[calc(100vh-60px)]">
           <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" />
         </div>
@@ -373,7 +379,7 @@ const SupportChat = () => {
   if (showNewSessionModal) {
     return (
       <div className="min-h-screen bg-background-light dark:bg-[#050806]">
-        <TopHeader title="Support Chat" showBack={true} onBack={() => navigate('/support')} />
+        <TopHeader title="Support Chat" showBack={true} onBackClick={handleBackToHelp} />
         <div className="p-4">
           <div className="bg-white dark:bg-[#111b17] rounded-2xl p-6 shadow-sm">
             <div className="w-14 h-14 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mb-4 mx-auto">
@@ -438,7 +444,7 @@ const SupportChat = () => {
       <TopHeader 
         title="Support Chat" 
         showBack={true} 
-        onBack={() => navigate('/support')}
+        onBackClick={handleBackToHelp}
         subtitle={session?.subject}
       />
       

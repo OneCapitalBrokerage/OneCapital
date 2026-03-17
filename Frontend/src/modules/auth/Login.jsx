@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import LegalBottomSheet from '../../components/shared/LegalBottomSheet';
 
 const Login = () => {
   const navigate = useNavigate();
@@ -9,6 +10,7 @@ const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [activeLegalDocument, setActiveLegalDocument] = useState(null);
   const displayError = error || authError || '';
 
   useEffect(() => {
@@ -183,9 +185,21 @@ const Login = () => {
         <div className="pt-5 text-center">
           <p className="text-[10px] text-slate-400 leading-relaxed px-2">
             By continuing, you agree to our{' '}
-            <button type="button" className="underline hover:text-[#137fec] transition-colors">Terms</button>
+            <button
+              type="button"
+              onClick={() => setActiveLegalDocument('terms')}
+              className="font-medium text-[#137fec] underline decoration-[#137fec]/40 underline-offset-2 transition-colors hover:text-blue-700"
+            >
+              Terms & Conditions
+            </button>
             {' '}and{' '}
-            <button type="button" className="underline hover:text-[#137fec] transition-colors">Privacy Policy</button>.
+            <button
+              type="button"
+              onClick={() => setActiveLegalDocument('privacy')}
+              className="font-medium text-[#137fec] underline decoration-[#137fec]/40 underline-offset-2 transition-colors hover:text-blue-700"
+            >
+              Privacy Policy
+            </button>.
           </p>
           <div className="mt-2 flex items-center justify-center gap-1 text-[10px] text-slate-300">
             <span className="material-symbols-outlined text-[12px]">lock</span>
@@ -194,6 +208,12 @@ const Login = () => {
         </div>
 
       </form>
+
+      <LegalBottomSheet
+        isOpen={!!activeLegalDocument}
+        defaultDocumentKey={activeLegalDocument || 'terms'}
+        onClose={() => setActiveLegalDocument(null)}
+      />
     </div>
   );
 };

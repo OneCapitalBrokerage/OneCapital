@@ -28,6 +28,8 @@ const ClientPricingSchema = new Schema(
       option_mode: { type: String, enum: ['ABSOLUTE', 'PERCENT'], default: 'ABSOLUTE' },
       mcx: { type: Number, default: 0 },
       mcx_mode: { type: String, enum: ['ABSOLUTE', 'PERCENT'], default: 'ABSOLUTE' },
+      mcx_option: { type: Number, default: 0 },
+      mcx_option_mode: { type: String, enum: ['ABSOLUTE', 'PERCENT'], default: 'ABSOLUTE' },
     },
 
     updated_by: { type: Schema.Types.ObjectId, ref: 'Broker' },

@@ -55,6 +55,7 @@ const Funds = () => {
     delivery: { available: 0, used: 0, remaining: 0 },
     optionPremium: { percent: 10, base: 0, limit: 0, used: 0, remaining: 0 },
     commodityDelivery: { available: 0, used: 0, remaining: 0 },
+    commodityIntraday: { available: 0, used: 0, remaining: 0 },
     commodityOptionPremium: { percent: 10, base: 0, limit: 0, used: 0, remaining: 0 },
   });
   const [summary, setSummary] = useState({
@@ -157,6 +158,11 @@ const Funds = () => {
           used: data.trading?.commodityDelivery?.used ?? 0,
           remaining: data.trading?.commodityDelivery?.remaining ?? 0,
         },
+        commodityIntraday: {
+          available: data.trading?.commodityIntraday?.available ?? 0,
+          used: data.trading?.commodityIntraday?.used ?? 0,
+          remaining: data.trading?.commodityIntraday?.remaining ?? 0,
+        },
         commodityOptionPremium: {
           percent: data.trading?.commodityOptionPremium?.percent ?? 10,
           base: data.trading?.commodityOptionPremium?.base ?? 0,
@@ -224,11 +230,13 @@ const Funds = () => {
   const totalMarginAvailable =
     trading.intraday.available +
     trading.delivery.available +
-    trading.commodityDelivery.available;
+    trading.commodityDelivery.available +
+    trading.commodityIntraday.available;
   const totalMarginUsed =
     trading.intraday.used +
     trading.delivery.used +
-    trading.commodityDelivery.used;
+    trading.commodityDelivery.used +
+    trading.commodityIntraday.used;
   const usedPercent = totalMarginAvailable > 0 ? Math.round((totalMarginUsed / totalMarginAvailable) * 100) : 0;
   const saturdayActive = isSaturdayIst();
   const withdrawableNetCash = Math.max(0, Number(wallet.withdrawableNetCash) || 0);
@@ -245,7 +253,12 @@ const Funds = () => {
           <h2 className="text-[#111418] dark:text-[#e8f3ee] text-[17px] sm:text-[19px] font-bold leading-tight">Funds</h2>
           <p className="text-[#617589] dark:text-[#9cb7aa] text-[11px] sm:text-[13px]">ID: {user?.customer_id || user?.id || '---'}</p>
         </div>
-        <button className="text-[#137fec] text-[14px] sm:text-[15px] font-semibold hover:opacity-80">Help</button>
+        <button
+          onClick={() => navigate('/support', { state: { backTo: '/funds' } })}
+          className="inline-flex items-center justify-end text-[#137fec] text-[14px] sm:text-[15px] font-semibold hover:opacity-80 transition-opacity"
+        >
+          Help
+        </button>
       </div>
 
       {error && (
@@ -513,6 +526,27 @@ const Funds = () => {
                 </div>
               </div>
 
+              {/* Commodities Intraday Margin (MCX) */}
+              <div className="p-3">
+                <div className="flex justify-between items-center mb-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-orange-500 text-[16px]">speed</span>
+                    <p className="text-[#111418] dark:text-[#e8f3ee] text-[13px] font-medium">Commodities Intraday Margin</p>
+                  </div>
+                  <p className="text-[#111418] dark:text-[#e8f3ee] text-[13px] font-bold">{formatCurrency(trading.commodityIntraday.remaining)}</p>
+                </div>
+                <div className="w-full bg-gray-100 dark:bg-[#16231d] rounded-full h-1.5">
+                  <div
+                    className="bg-orange-500 h-1.5 rounded-full transition-all"
+                    style={{ width: `${trading.commodityIntraday.available > 0 ? Math.min(100, Math.round((trading.commodityIntraday.used / trading.commodityIntraday.available) * 100)) : 0}%` }}
+                  ></div>
+                </div>
+                <div className="flex justify-between mt-1">
+                  <p className="text-[9px] text-[#617589] dark:text-[#9cb7aa]">Used: {formatCurrency(trading.commodityIntraday.used)}</p>
+                  <p className="text-[9px] text-[#617589] dark:text-[#9cb7aa]">Limit: {formatCurrency(trading.commodityIntraday.available)}</p>
+                </div>
+              </div>
+
               {/* Commodities Delivery Margin (MCX) */}
               <div className="p-3">
                 <div className="flex justify-between items-center mb-1.5">
@@ -543,9 +577,16 @@ const Funds = () => {
                   </div>
                   <p className="text-[#111418] dark:text-[#e8f3ee] text-[13px] font-bold">{formatCurrency(trading.commodityOptionPremium.remaining)}</p>
                 </div>
-                <p className="text-[9px] text-[#617589] dark:text-[#9cb7aa]">
-                  {trading.commodityOptionPremium.percent}% of commodities delivery margin · Limit: {formatCurrency(trading.commodityOptionPremium.limit)} · Used: {formatCurrency(trading.commodityOptionPremium.used)}
-                </p>
+                <div className="w-full bg-gray-100 dark:bg-[#16231d] rounded-full h-1.5">
+                  <div
+                    className="bg-orange-400 h-1.5 rounded-full transition-all"
+                    style={{ width: `${trading.commodityOptionPremium.limit > 0 ? Math.min(100, Math.round((trading.commodityOptionPremium.used / trading.commodityOptionPremium.limit) * 100)) : 0}%` }}
+                  ></div>
+                </div>
+                <div className="flex justify-between mt-1">
+                  <p className="text-[9px] text-[#617589] dark:text-[#9cb7aa]">Used: {formatCurrency(trading.commodityOptionPremium.used)}</p>
+                  <p className="text-[9px] text-[#617589] dark:text-[#9cb7aa]">Limit: {formatCurrency(trading.commodityOptionPremium.limit)}</p>
+                </div>
               </div>
             </div>
           )}

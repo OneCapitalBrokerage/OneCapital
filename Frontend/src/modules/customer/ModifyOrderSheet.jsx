@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import customerApi from '../../api/customer';
+import { getMcxSpec } from '../../utils/mcxSpecs';
 
 const MARKET_CLOSED_TEXT = 'Market Closed. Open From 9:15AM To 3:15PM On Working Days';
 
@@ -52,6 +53,10 @@ const ModifyOrderSheet = ({
     const seg = String(order?.segment || '').toUpperCase();
     return ex.includes('MCX') || seg.includes('MCX') || upc > 0;
   }, [order?.exchange, order?.segment, upc]);
+  const mcxSpec = useMemo(() => {
+    if (!isMcx) return null;
+    return getMcxSpec(order?.name) || getMcxSpec(order?.symbol) || getMcxSpec(order?.tradingsymbol || order?.trading_symbol);
+  }, [isMcx, order?.name, order?.symbol, order?.tradingsymbol, order?.trading_symbol]);
   const isMcxOrder = isMcx;
   const currentLots = rawLots > 0 ? rawLots : Math.round(currentQty / lotSize);
   const currentPrice = order?.price || 0;
@@ -363,6 +368,13 @@ const ModifyOrderSheet = ({
             </div>
           </div>
 
+          {(mcxSpec || lotSize > 1) && (
+            <p className="text-[10px] text-gray-400 text-center -mt-2">
+              {currentQty} {mcxSpec ? 'units' : 'qty'} ({currentLots} × {lotSize})
+              {mcxSpec?.contract_size ? ` · ${mcxSpec.contract_size}` : ''}
+            </p>
+          )}
+
           {/* Add Lots */}
           <div>
             <label className="text-[11px] font-semibold text-[#617589] dark:text-[#9cb7aa] uppercase tracking-wider mb-1.5 block">Add Lots</label>
@@ -394,10 +406,16 @@ const ModifyOrderSheet = ({
             {parsedAddLots > 0 && (
               <div className="mt-2 flex flex-col gap-1 text-[11px] text-[#617589] dark:text-[#9cb7aa]">
                 <div className="flex items-center gap-3">
-                  <span>+{parsedAddLots} lots ({addQty} qty)</span>
+                  <span>+{parsedAddLots} {parsedAddLots === 1 ? 'lot' : 'lots'} ({addQty} {mcxSpec ? 'units' : 'qty'})</span>
                   <span className="size-0.5 bg-gray-300 rounded-full" />
-                  <span>New total: <span className="font-semibold text-[#111418] dark:text-[#e8f3ee]">{newTotalLots} lots ({newTotalQty} qty)</span></span>
+                  <span>New total: <span className="font-semibold text-[#111418] dark:text-[#e8f3ee]">{newTotalLots} lots ({newTotalQty} {mcxSpec ? 'units' : 'qty'})</span></span>
                 </div>
+                {(mcxSpec || lotSize > 1) && (
+                  <p className="text-[10px] text-gray-400">
+                    {addQty} {mcxSpec ? 'units' : 'qty'} ({parsedAddLots} × {lotSize})
+                    {mcxSpec?.contract_size ? ` · ${mcxSpec.contract_size}` : ''}
+                  </p>
+                )}
                 <div className="flex items-center gap-1">
                   <span>LTP:</span>
                   <span className="font-semibold text-[#111418] dark:text-[#e8f3ee]">₹{ltp.toFixed(2)}</span>

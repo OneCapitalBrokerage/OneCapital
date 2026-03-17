@@ -9,9 +9,6 @@ import {
   createClient,
   updateClient,
   deleteClient,
-  blockClient,
-  unblockClient,
-  toggleTrading,
   toggleHoldingsExit,
   toggleOrderExitAllowed,
   loginAsClient,
@@ -26,7 +23,6 @@ import {
   convertOrderToHold,
   extendOrderValidity,
   setClientSettlement,
-  toggleGlitch,
   adjustHolding,
 } from '../../Controllers/broker/ClientController.js';
 
@@ -69,27 +65,6 @@ router.put('/clients/:id', updateClient);
  * @access  Private (Broker only)
  */
 router.delete('/clients/:id', deleteClient);
-
-/**
- * @route   POST /api/broker/clients/:id/block
- * @desc    Block client account
- * @access  Private (Broker only)
- */
-router.post('/clients/:id/block', blockClient);
-
-/**
- * @route   POST /api/broker/clients/:id/unblock
- * @desc    Unblock client account
- * @access  Private (Broker only)
- */
-router.post('/clients/:id/unblock', unblockClient);
-
-/**
- * @route   PUT /api/broker/clients/:id/trading
- * @desc    Toggle client trading permission
- * @access  Private (Broker only)
- */
-router.put('/clients/:id/trading', toggleTrading);
 
 /**
  * @route   PUT /api/broker/clients/:id/holdings-exit
@@ -174,13 +149,6 @@ router.post('/clients/:id/orders/:orderId/extend-validity', extendOrderValidity)
  * @access  Private (Broker only)
  */
 router.put('/clients/:id/settlement', setClientSettlement);
-
-/**
- * @route   PUT /api/broker/clients/:id/glitch
- * @desc    Enable or disable fault injection for a client
- * @access  Private (Broker only)
- */
-router.put('/clients/:id/glitch', toggleGlitch);
 
 /**
  * @route   PUT /api/broker/clients/:id/orders/:orderId/holding-adjustment

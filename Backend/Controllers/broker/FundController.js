@@ -39,6 +39,7 @@ const normalizeFundDocument = (fund) => {
   if (!fund.overnight) fund.overnight = {};
   if (!fund.delivery) fund.delivery = {};
   if (!fund.commodity_delivery) fund.commodity_delivery = { available_limit: 0, used_limit: 0 };
+  if (!fund.commodity_intraday) fund.commodity_intraday = { available_limit: 0, used_limit: 0 };
   if (!fund.commodity_option) fund.commodity_option = { limit_percentage: 10, used: 0 };
   return fund;
 };
@@ -56,9 +57,11 @@ const getFundSnapshot = (fund) => {
   const optionChainLimit = Number(((openingBalance * optionChainLimitPercent) / 100).toFixed(2));
   const commodityDeliveryAvailable = nonNegative(fund.commodity_delivery?.available_limit);
   const commodityDeliveryUsed = nonNegative(fund.commodity_delivery?.used_limit);
+  const commodityIntradayAvailable = nonNegative(fund.commodity_intraday?.available_limit);
+  const commodityIntradayUsed = nonNegative(fund.commodity_intraday?.used_limit);
   const commodityOptionLimitPercent = normalizeOptionLimitPercent(fund.commodity_option?.limit_percentage);
   const commodityOptionUsed = nonNegative(fund.commodity_option?.used);
-  const commodityOptionLimit = Number(((commodityDeliveryAvailable * commodityOptionLimitPercent) / 100).toFixed(2));
+  const commodityOptionLimit = Number((((commodityIntradayAvailable + commodityDeliveryAvailable) * commodityOptionLimitPercent) / 100).toFixed(2));
 
   return {
     availableCash,
@@ -74,6 +77,8 @@ const getFundSnapshot = (fund) => {
     optionChainLimitPercent,
     commodityDeliveryAvailable,
     commodityDeliveryUsed,
+    commodityIntradayAvailable,
+    commodityIntradayUsed,
     commodityOptionLimitPercent,
     commodityOptionLimit,
     commodityOptionUsed,
@@ -102,6 +107,9 @@ const getChangedFundFields = (beforeSnapshot, afterSnapshot) => {
   }
   if (toNumber(beforeSnapshot?.commodityDeliveryAvailable) !== toNumber(afterSnapshot?.commodityDeliveryAvailable)) {
     fields.push('commodity delivery available');
+  }
+  if (toNumber(beforeSnapshot?.commodityIntradayAvailable) !== toNumber(afterSnapshot?.commodityIntradayAvailable)) {
+    fields.push('commodity intraday available');
   }
   if (toNumber(beforeSnapshot?.commodityOptionLimitPercent) !== toNumber(afterSnapshot?.commodityOptionLimitPercent)) {
     fields.push('commodity option limit percentage');
@@ -138,6 +146,9 @@ const applyFundSnapshot = (fund, snapshot) => {
   // Commodity buckets
   const commodityDeliveryAvailable = nonNegative(snapshot.commodityDeliveryAvailable ?? fund.commodity_delivery?.available_limit);
   fund.commodity_delivery.available_limit = commodityDeliveryAvailable;
+
+  const commodityIntradayAvailable = nonNegative(snapshot.commodityIntradayAvailable ?? fund.commodity_intraday?.available_limit);
+  fund.commodity_intraday.available_limit = commodityIntradayAvailable;
 
   const commodityOptionLimitPercent = normalizeOptionLimitPercent(
     snapshot.commodityOptionLimitPercent ?? fund.commodity_option?.limit_percentage
@@ -180,6 +191,7 @@ const findOrCreateFund = async (customer, brokerIdStr) => {
       delivery: { available: 0, used: 0 },
       option_limit_percentage: DEFAULT_OPTION_CHAIN_LIMIT_PERCENT,
       commodity_delivery: { available_limit: 0, used_limit: 0 },
+      commodity_intraday: { available_limit: 0, used_limit: 0 },
       commodity_option: { limit_percentage: DEFAULT_OPTION_CHAIN_LIMIT_PERCENT, used: 0 },
     });
   } else {
@@ -226,6 +238,11 @@ const buildBalanceResponse = (customer, fund) => {
         available: snapshot.commodityDeliveryAvailable,
         used: snapshot.commodityDeliveryUsed,
         free: Math.max(0, snapshot.commodityDeliveryAvailable - snapshot.commodityDeliveryUsed),
+      },
+      commodityIntraday: {
+        available: snapshot.commodityIntradayAvailable,
+        used: snapshot.commodityIntradayUsed,
+        free: Math.max(0, snapshot.commodityIntradayAvailable - snapshot.commodityIntradayUsed),
       },
       commodityOption: {
         percentage: snapshot.commodityOptionLimitPercent,
@@ -414,6 +431,7 @@ const updateClientFunds = asyncHandler(async (req, res) => {
     longTermAvailable,
     optionLimitPercentage,
     commodityDeliveryAvailable,
+    commodityIntradayAvailable,
     commodityOptionLimitPercentage,
     note,
   } = req.body || {};
@@ -428,6 +446,7 @@ const updateClientFunds = asyncHandler(async (req, res) => {
     longTermAvailable !== undefined ||
     optionLimitPercentage !== undefined ||
     commodityDeliveryAvailable !== undefined ||
+    commodityIntradayAvailable !== undefined ||
     commodityOptionLimitPercentage !== undefined;
 
   if (!hasAnyUpdate) {
@@ -444,6 +463,7 @@ const updateClientFunds = asyncHandler(async (req, res) => {
     ['longTermAvailable', longTermAvailable],
     ['optionLimitPercentage', optionLimitPercentage],
     ['commodityDeliveryAvailable', commodityDeliveryAvailable],
+    ['commodityIntradayAvailable', commodityIntradayAvailable],
     ['commodityOptionLimitPercentage', commodityOptionLimitPercentage],
   ]
     .filter(([, value]) => value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0))
@@ -497,6 +517,8 @@ const updateClientFunds = asyncHandler(async (req, res) => {
 
   const nextCommodityDeliveryAvailable =
     commodityDeliveryAvailable !== undefined ? nonNegative(commodityDeliveryAvailable) : previousSnapshot.commodityDeliveryAvailable;
+  const nextCommodityIntradayAvailable =
+    commodityIntradayAvailable !== undefined ? nonNegative(commodityIntradayAvailable) : previousSnapshot.commodityIntradayAvailable;
   const nextCommodityOptionLimitPercent =
     commodityOptionLimitPercentage !== undefined
       ? normalizeOptionLimitPercent(commodityOptionLimitPercentage)
@@ -512,6 +534,7 @@ const updateClientFunds = asyncHandler(async (req, res) => {
         ? normalizeOptionLimitPercent(optionLimitPercentage)
         : previousSnapshot.optionChainLimitPercent,
     commodityDeliveryAvailable: nextCommodityDeliveryAvailable,
+    commodityIntradayAvailable: nextCommodityIntradayAvailable,
     commodityOptionLimitPercent: nextCommodityOptionLimitPercent,
   };
 
@@ -575,6 +598,7 @@ const updateClientFunds = asyncHandler(async (req, res) => {
       longTermAvailable: previousSnapshot.longTermAvailable,
       optionChainLimitPercent: previousSnapshot.optionChainLimitPercent,
       commodityDeliveryAvailable: previousSnapshot.commodityDeliveryAvailable,
+      commodityIntradayAvailable: previousSnapshot.commodityIntradayAvailable,
       commodityOptionLimitPercent: previousSnapshot.commodityOptionLimitPercent,
     },
     marginAfter: {
@@ -583,6 +607,7 @@ const updateClientFunds = asyncHandler(async (req, res) => {
       longTermAvailable: updatedSnapshot.longTermAvailable,
       optionChainLimitPercent: updatedSnapshot.optionChainLimitPercent,
       commodityDeliveryAvailable: updatedSnapshot.commodityDeliveryAvailable,
+      commodityIntradayAvailable: updatedSnapshot.commodityIntradayAvailable,
       commodityOptionLimitPercent: updatedSnapshot.commodityOptionLimitPercent,
     },
     note: fundEditNote,

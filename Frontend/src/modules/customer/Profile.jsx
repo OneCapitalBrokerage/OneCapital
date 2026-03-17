@@ -5,6 +5,7 @@ import { usePWAInstall } from '../../context/PWAInstallContext';
 import customerApi from '../../api/customer';
 import { readSessionCache, writeSessionCache, clearSessionCache } from '../../utils/sessionCache';
 import { ProfileWarningBanner } from '../../components/shared/WarningBanner';
+import LegalBottomSheet from '../../components/shared/LegalBottomSheet';
 
 const PROFILE_CACHE_KEY = 'profile_tab_v1';
 const PROFILE_CACHE_TTL_MS = 60 * 1000;
@@ -111,11 +112,14 @@ const Profile = () => {
   };
 
   const { canInstall, triggerInstall } = usePWAInstall();
+  const [activeLegalDocument, setActiveLegalDocument] = useState(null);
 
   const menuItems = [
     { icon: 'menu_book', label: 'Order Book', path: '/order-book' },
     { icon: 'payments', label: 'Payments', path: '/profile/payments' },
-    { icon: 'help_outline', label: 'Help & Support', path: '/support' },
+    { icon: 'help_outline', label: 'Help & Support', path: '/support', state: { backTo: '/profile' } },
+    { icon: 'gavel', label: 'Terms & Conditions', action: () => setActiveLegalDocument('terms') },
+    { icon: 'privacy_tip', label: 'Privacy Policy', action: () => setActiveLegalDocument('privacy') },
     { icon: 'info', label: 'About', path: '/about' },
     { icon: 'settings', label: 'Settings', path: '/settings' },
     ...(canInstall ? [{ icon: 'install_mobile', label: 'Install App', action: triggerInstall }] : []),
@@ -306,7 +310,7 @@ const Profile = () => {
           {menuItems.filter(item => !item.danger).map((item, index, arr) => (
             <button
               key={item.path || item.label}
-              onClick={() => item.action ? item.action() : navigate(item.path)}
+              onClick={() => item.action ? item.action() : navigate(item.path, item.state ? { state: item.state } : undefined)}
               className={`w-full flex items-center gap-3 sm:gap-4 px-3 sm:px-4 py-3 sm:py-4 hover:bg-gray-50 dark:hover:bg-[#16231d] transition-colors ${
                 index < arr.length - 1 ? 'border-b border-gray-100 dark:border-[#22352d]' : ''
               }`}
@@ -329,6 +333,12 @@ const Profile = () => {
           <span>Logout</span>
         </button>
       </div>
+
+      <LegalBottomSheet
+        isOpen={!!activeLegalDocument}
+        defaultDocumentKey={activeLegalDocument || 'terms'}
+        onClose={() => setActiveLegalDocument(null)}
+      />
     </div>
   );
 };

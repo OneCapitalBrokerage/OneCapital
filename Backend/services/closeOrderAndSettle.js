@@ -207,6 +207,7 @@ export async function closeOrderAndSettle(orderId, { exitPrice, exitReason = 'ma
         releaseMarginOnClose(fund, order, {
           reason: exitReason,
           orderId: String(orderId),
+          bucketOverride: order.meta?.margin_hold?.bucket,
         });
       }
       order.margin_released_at = now;

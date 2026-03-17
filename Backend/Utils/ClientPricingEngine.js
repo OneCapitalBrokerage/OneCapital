@@ -21,6 +21,8 @@ export const INITIAL_CLIENT_PRICING = Object.freeze({
     option_mode: 'ABSOLUTE',
     mcx: 0,
     mcx_mode: 'ABSOLUTE',
+    mcx_option: 0,
+    mcx_option_mode: 'ABSOLUTE',
   },
 });
 
@@ -48,16 +50,32 @@ const normalizeSpreadMode = (mode) => {
   return m === 'PERCENT' ? 'PERCENT' : 'ABSOLUTE';
 };
 
-const normalizeSpread = (spread = {}) => ({
-  cash: clamp(toNumber(spread.cash, INITIAL_CLIENT_PRICING.spread.cash), -1000, 1000),
-  cash_mode: normalizeSpreadMode(spread.cash_mode),
-  future: clamp(toNumber(spread.future, INITIAL_CLIENT_PRICING.spread.future), -1000, 1000),
-  future_mode: normalizeSpreadMode(spread.future_mode),
-  option: clamp(toNumber(spread.option, INITIAL_CLIENT_PRICING.spread.option), -1000, 1000),
-  option_mode: normalizeSpreadMode(spread.option_mode),
-  mcx: clamp(toNumber(spread.mcx, INITIAL_CLIENT_PRICING.spread.mcx), -1000, 1000),
-  mcx_mode: normalizeSpreadMode(spread.mcx_mode),
-});
+const normalizeSpread = (spread = {}) => {
+  const normalizedMcx = clamp(toNumber(spread.mcx, INITIAL_CLIENT_PRICING.spread.mcx), -1000, 1000);
+  const normalizedMcxMode = normalizeSpreadMode(spread.mcx_mode);
+
+  return {
+    cash: clamp(toNumber(spread.cash, INITIAL_CLIENT_PRICING.spread.cash), -1000, 1000),
+    cash_mode: normalizeSpreadMode(spread.cash_mode),
+    future: clamp(toNumber(spread.future, INITIAL_CLIENT_PRICING.spread.future), -1000, 1000),
+    future_mode: normalizeSpreadMode(spread.future_mode),
+    option: clamp(toNumber(spread.option, INITIAL_CLIENT_PRICING.spread.option), -1000, 1000),
+    option_mode: normalizeSpreadMode(spread.option_mode),
+    mcx: normalizedMcx,
+    mcx_mode: normalizedMcxMode,
+    mcx_option: clamp(
+      toNumber(
+        spread.mcx_option ?? spread.mcxOption,
+        normalizedMcx
+      ),
+      -1000,
+      1000
+    ),
+    mcx_option_mode: normalizeSpreadMode(
+      spread.mcx_option_mode ?? spread.mcxOptionMode ?? normalizedMcxMode
+    ),
+  };
+};
 
 const normalizeBrokerage = (brokerage = {}) => {
   const legacyCashFuture = brokerage.cash_future || {};
@@ -201,9 +219,12 @@ export const inferSpreadBucket = ({ exchange, segment, symbol, orderType }) => {
   const ex = String(exchange || '').toUpperCase();
   const seg = String(segment || '').toUpperCase();
 
-  if (ex.includes('MCX') || seg.includes('MCX')) return 'MCX';
-
   const pricingBucket = inferPricingBucket({ exchange, segment, symbol, orderType });
+
+  if (ex.includes('MCX') || seg.includes('MCX')) {
+    return pricingBucket === 'OPTION' ? 'MCX_OPTION' : 'MCX';
+  }
+
   if (pricingBucket === 'OPTION') return 'OPTION';
   if (pricingBucket === 'FUTURE') return 'FUTURE';
   return 'CASH';
@@ -212,6 +233,7 @@ export const inferSpreadBucket = ({ exchange, segment, symbol, orderType }) => {
 export const getSpreadForBucket = (pricing, bucket) => {
   const spread = pricing?.spread || INITIAL_CLIENT_PRICING.spread;
   const key = String(bucket || 'CASH').toUpperCase();
+  if (key === 'MCX_OPTION') return toNumber(spread.mcx_option ?? spread.mcx, 0);
   if (key === 'MCX') return toNumber(spread.mcx, 0);
   if (key === 'OPTION') return toNumber(spread.option, 0);
   if (key === 'FUTURE') return toNumber(spread.future, 0);
@@ -221,6 +243,12 @@ export const getSpreadForBucket = (pricing, bucket) => {
 export const getSpreadConfigForBucket = (pricing, bucket) => {
   const spread = pricing?.spread || INITIAL_CLIENT_PRICING.spread;
   const key = String(bucket || 'CASH').toUpperCase();
+  if (key === 'MCX_OPTION') {
+    return {
+      value: toNumber(spread.mcx_option ?? spread.mcx, 0),
+      mode: normalizeSpreadMode(spread.mcx_option_mode ?? spread.mcx_mode),
+    };
+  }
   if (key === 'MCX') return { value: toNumber(spread.mcx, 0), mode: normalizeSpreadMode(spread.mcx_mode) };
   if (key === 'OPTION') return { value: toNumber(spread.option, 0), mode: normalizeSpreadMode(spread.option_mode) };
   if (key === 'FUTURE') return { value: toNumber(spread.future, 0), mode: normalizeSpreadMode(spread.future_mode) };

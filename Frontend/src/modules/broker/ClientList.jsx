@@ -66,30 +66,6 @@ const ClientList = () => {
     return () => clearTimeout(debounce);
   }, [fetchClients]);
 
-  const handleBlock = async (clientId) => {
-    setActionLoading(clientId);
-    try {
-      await brokerApi.blockClient(clientId);
-      setClients(prev => prev.map(c => c.id === clientId ? { ...c, status: 'blocked' } : c));
-    } catch (err) {
-      console.error('Failed to block client:', err);
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const handleUnblock = async (clientId) => {
-    setActionLoading(clientId);
-    try {
-      await brokerApi.unblockClient(clientId);
-      setClients(prev => prev.map(c => c.id === clientId ? { ...c, status: 'active' } : c));
-    } catch (err) {
-      console.error('Failed to unblock client:', err);
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
   const handleDelete = async (clientId) => {
     setActionLoading(clientId);
     try {
@@ -281,21 +257,6 @@ const ClientList = () => {
                       </div>
                     ) : (
                       <div className="flex items-center gap-2.5 sm:gap-3">
-                        {client.status === 'blocked' ? (
-                          <button onClick={() => handleUnblock(client.id)} disabled={actionLoading === client.id} className="flex flex-col items-center">
-                            <div className="rounded-full bg-[#137fec]/10 border border-[#137fec]/20 p-1.5 sm:p-2 text-[#137fec] cursor-pointer">
-                              <span className="material-symbols-outlined text-[18px] sm:text-[20px]">lock_open</span>
-                            </div>
-                            <p className="text-[9px] sm:text-[10px] mt-0.5 sm:mt-1 font-bold text-[#137fec]">Unblock</p>
-                          </button>
-                        ) : (
-                          <button onClick={() => handleBlock(client.id)} disabled={actionLoading === client.id} className="flex flex-col items-center">
-                            <div className="rounded-full bg-white border border-gray-200 p-1.5 sm:p-2 text-[#111418] cursor-pointer hover:bg-gray-100">
-                              <span className="material-symbols-outlined text-[18px] sm:text-[20px]">block</span>
-                            </div>
-                            <p className="text-[9px] sm:text-[10px] mt-0.5 sm:mt-1 font-medium text-[#617589]">Block</p>
-                          </button>
-                        )}
                         <button onClick={() => setDeleteConfirm(client.id)} className="flex flex-col items-center">
                           <div className="rounded-full bg-white border border-gray-200 p-1.5 sm:p-2 text-red-500 cursor-pointer hover:bg-red-50">
                             <span className="material-symbols-outlined text-[18px] sm:text-[20px]">delete</span>

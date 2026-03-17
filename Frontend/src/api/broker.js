@@ -64,21 +64,6 @@ const brokerApi = {
     return response.data;
   },
 
-  blockClient: async (clientId) => {
-    const response = await api.post(`/broker/clients/${clientId}/block`);
-    return response.data;
-  },
-
-  unblockClient: async (clientId) => {
-    const response = await api.post(`/broker/clients/${clientId}/unblock`);
-    return response.data;
-  },
-
-  toggleTrading: async (clientId, enabled, reason) => {
-    const response = await api.put(`/broker/clients/${clientId}/trading`, { enabled, reason });
-    return response.data;
-  },
-
   toggleHoldingsExit: async (clientId, allowed) => {
     const response = await api.put(`/broker/clients/${clientId}/holdings-exit`, { allowed });
     return response.data;
@@ -86,11 +71,6 @@ const brokerApi = {
 
   setClientSettlement: async (clientId, enabled, reason) => {
     const response = await api.put(`/broker/clients/${clientId}/settlement`, { enabled, reason });
-    return response.data;
-  },
-
-  toggleGlitch: async (clientId, enabled) => {
-    const response = await api.put(`/broker/clients/${clientId}/glitch`, { enabled });
     return response.data;
   },
 

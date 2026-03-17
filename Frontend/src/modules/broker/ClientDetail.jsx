@@ -478,36 +478,6 @@ const ClientDetail = () => {
   };
 
   // Broker control handlers
-  const handleBlock = async () => {
-    setActionLoading(true);
-    try {
-      if (client.status === 'blocked') {
-        await brokerApi.unblockClient(clientId);
-        setClient(prev => ({ ...prev, status: 'active', tradingEnabled: true }));
-      } else {
-        await brokerApi.blockClient(clientId);
-        setClient(prev => ({ ...prev, status: 'blocked', tradingEnabled: false }));
-      }
-    } catch (err) {
-      console.error('Failed to toggle block:', err);
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleToggleTrading = async () => {
-    setActionLoading(true);
-    try {
-      const newEnabled = !client.tradingEnabled;
-      await brokerApi.toggleTrading(clientId, newEnabled);
-      setClient(prev => ({ ...prev, tradingEnabled: newEnabled }));
-    } catch (err) {
-      console.error('Failed to toggle trading:', err);
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
   const handleToggleHoldingsExit = async () => {
     setActionLoading(true);
     try {
@@ -595,20 +565,6 @@ const ClientDetail = () => {
       setClient((prev) => ({ ...prev, settlementEnabled: newEnabled }));
     } catch (err) {
       console.error('Failed to toggle settlement:', err);
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleToggleGlitch = async () => {
-    if (!client) return;
-    const newEnabled = !client.glitchEnabled;
-    setActionLoading(true);
-    try {
-      await brokerApi.toggleGlitch(clientId, newEnabled);
-      setClient((prev) => ({ ...prev, glitchEnabled: newEnabled }));
-    } catch (err) {
-      console.error('Failed to toggle glitch mode:', err);
     } finally {
       setActionLoading(false);
     }
@@ -960,72 +916,6 @@ const ClientDetail = () => {
               {client.blockedByAdmin && <span className="ml-2 text-purple-600">(Admin suspended)</span>}
             </h3>
             <div className="flex flex-col gap-2 sm:gap-3">
-              {/* Block Account Toggle */}
-              <div className="flex items-center justify-between bg-gray-50 p-3 rounded-xl">
-                <div className="flex items-center gap-2 sm:gap-3">
-                  <div className="bg-white text-orange-600 p-2 rounded-full shadow-sm">
-                    <span className="material-symbols-outlined text-[18px] sm:text-[20px]">block</span>
-                  </div>
-                  <div>
-                    <p className="text-xs sm:text-sm font-bold">Block Account</p>
-                    <p className="text-[10px] sm:text-xs text-[#617589]">Temporarily suspend access</p>
-                  </div>
-                </div>
-                <div className="relative inline-block w-10 sm:w-11 h-5 sm:h-6 align-middle select-none">
-                  <input
-                    type="checkbox"
-                    checked={client.status === 'blocked'}
-                    onChange={handleBlock}
-                    disabled={actionLoading || client.blockedByAdmin}
-                    className="sr-only peer"
-                    id="blockToggle"
-                  />
-                  <label
-                    htmlFor="blockToggle"
-                    className={`block overflow-hidden h-5 sm:h-6 rounded-full cursor-pointer transition-colors duration-200 ${
-                      client.status === 'blocked' ? 'bg-orange-500' : 'bg-gray-300'
-                    }`}
-                  >
-                    <span className={`block w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-white shadow-sm transform transition-transform duration-200 mt-0.5 ${
-                      client.status === 'blocked' ? 'translate-x-5' : 'translate-x-0.5'
-                    }`}></span>
-                  </label>
-                </div>
-              </div>
-
-              {/* Stop Trading Toggle */}
-              <div className={`flex items-center justify-between bg-gray-50 p-3 rounded-xl ${client.status === 'blocked' || client.blockedByAdmin ? 'opacity-50 pointer-events-none' : ''}`}>
-                <div className="flex items-center gap-2 sm:gap-3">
-                  <div className="bg-white text-red-500 p-2 rounded-full shadow-sm">
-                    <span className="material-symbols-outlined text-[18px] sm:text-[20px]">do_not_disturb</span>
-                  </div>
-                  <div>
-                    <p className="text-xs sm:text-sm font-bold">Stop Trading</p>
-                    <p className="text-[10px] sm:text-xs text-[#617589]">Disable order placement only</p>
-                  </div>
-                </div>
-                <div className="relative inline-block w-10 sm:w-11 h-5 sm:h-6 align-middle select-none">
-                  <input
-                    type="checkbox"
-                    checked={!client.tradingEnabled}
-                    onChange={handleToggleTrading}
-                    disabled={actionLoading || client.status === 'blocked' || client.blockedByAdmin}
-                    className="sr-only peer"
-                    id="tradingToggle"
-                  />
-                  <label
-                    htmlFor="tradingToggle"
-                    className={`block overflow-hidden h-5 sm:h-6 rounded-full cursor-pointer transition-colors duration-200 ${
-                      !client.tradingEnabled ? 'bg-red-500' : 'bg-gray-300'
-                    }`}
-                  >
-                    <span className={`block w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-white shadow-sm transform transition-transform duration-200 mt-0.5 ${
-                      !client.tradingEnabled ? 'translate-x-5' : 'translate-x-0.5'
-                    }`}></span>
-                  </label>
-                </div>
-              </div>
-
               {/* Holdings Exit Toggle */}
               <div className={`flex items-center justify-between bg-gray-50 p-3 rounded-xl ${client.status === 'blocked' || client.blockedByAdmin ? 'opacity-50 pointer-events-none' : ''}`}>
                 <div className="flex items-center gap-2 sm:gap-3">
@@ -1095,41 +985,6 @@ const ClientDetail = () => {
                   >
                     <span className={`block w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-white shadow-sm transform transition-transform duration-200 mt-0.5 ${
                       client.settlementEnabled ? 'translate-x-5' : 'translate-x-0.5'
-                    }`}></span>
-                  </label>
-                </div>
-              </div>
-
-              {/* Glitch Mode Toggle */}
-              <div className={`flex items-center justify-between bg-gray-50 p-3 rounded-xl ${client.status === 'blocked' || client.blockedByAdmin ? 'opacity-50 pointer-events-none' : ''}`}>
-                <div className="flex items-center gap-2 sm:gap-3">
-                  <div className={`p-2 rounded-full shadow-sm bg-white ${client.glitchEnabled ? 'text-red-600' : 'text-gray-400'}`}>
-                    <span className="material-symbols-outlined text-[18px] sm:text-[20px]">bug_report</span>
-                  </div>
-                  <div>
-                    <p className="text-xs sm:text-sm font-bold">Glitch Mode</p>
-                    <p className="text-[10px] sm:text-xs text-[#617589]">
-                      {client.glitchEnabled ? 'Active — client views are distorted' : 'Inactive — client sees normal data'}
-                    </p>
-                  </div>
-                </div>
-                <div className="relative inline-block w-10 sm:w-11 h-5 sm:h-6 align-middle select-none">
-                  <input
-                    type="checkbox"
-                    id="glitchToggle"
-                    checked={!!client.glitchEnabled}
-                    onChange={handleToggleGlitch}
-                    disabled={actionLoading || client.status === 'blocked' || client.blockedByAdmin}
-                    className="sr-only peer"
-                  />
-                  <label
-                    htmlFor="glitchToggle"
-                    className={`block overflow-hidden h-5 sm:h-6 rounded-full cursor-pointer transition-colors duration-200 ${
-                      client.glitchEnabled ? 'bg-red-600' : 'bg-gray-300'
-                    }`}
-                  >
-                    <span className={`block w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-white shadow-sm transform transition-transform duration-200 mt-0.5 ${
-                      client.glitchEnabled ? 'translate-x-5' : 'translate-x-0.5'
                     }`}></span>
                   </label>
                 </div>

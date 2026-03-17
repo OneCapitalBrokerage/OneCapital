@@ -93,6 +93,8 @@ const mapPricingConfigToResponse = (pricing) => ({
     option_mode: normalizeSpreadModeValue(pricing?.spread?.option_mode),
     mcx: pricing?.spread?.mcx ?? INITIAL_CLIENT_PRICING_RESPONSE.spread.mcx,
     mcx_mode: normalizeSpreadModeValue(pricing?.spread?.mcx_mode),
+    mcx_option: pricing?.spread?.mcx_option ?? pricing?.spread?.mcx ?? INITIAL_CLIENT_PRICING_RESPONSE.spread.mcx_option,
+    mcx_option_mode: normalizeSpreadModeValue(pricing?.spread?.mcx_option_mode ?? pricing?.spread?.mcx_mode),
   },
 });
 
@@ -133,6 +135,7 @@ const sanitizePricingPayload = (payload = {}, base = INITIAL_CLIENT_PRICING_RESP
   const spreadFuture = toNumber(incomingSpread?.future);
   const spreadOption = toNumber(incomingSpread?.option);
   const spreadMcx = toNumber(incomingSpread?.mcx);
+  const spreadMcxOption = toNumber(incomingSpread?.mcx_option ?? incomingSpread?.mcxOption);
 
   const nextSpread = {
     cash: clamp(spreadCash ?? base.spread.cash, -1000, 1000),
@@ -143,6 +146,10 @@ const sanitizePricingPayload = (payload = {}, base = INITIAL_CLIENT_PRICING_RESP
     option_mode: normalizeSpreadModeValue(incomingSpread?.option_mode ?? base.spread.option_mode),
     mcx: clamp(spreadMcx ?? base.spread.mcx, -1000, 1000),
     mcx_mode: normalizeSpreadModeValue(incomingSpread?.mcx_mode ?? base.spread.mcx_mode),
+    mcx_option: clamp(spreadMcxOption ?? base.spread.mcx_option, -1000, 1000),
+    mcx_option_mode: normalizeSpreadModeValue(
+      incomingSpread?.mcx_option_mode ?? incomingSpread?.mcxOptionMode ?? base.spread.mcx_option_mode
+    ),
   };
 
   return { brokerage: nextBrokerage, spread: nextSpread };
@@ -516,118 +523,6 @@ const deleteClient = asyncHandler(async (req, res) => {
     message: 'Client moved to recycle bin.',
     id,
     dataSummary: archivedCustomer.data_summary,
-  });
-});
-
-/**
- * @desc     Block client
- * @route    POST /api/broker/clients/:id/block
- * @access   Private (Broker only)
- */
-const blockClient = asyncHandler(async (req, res) => {
-  const brokerId = req.user._id;
-  const brokerIdStr = req.user.login_id || req.user.stringBrokerId;
-  const { id } = req.params;
-  const { reason } = req.body;
-
-  const customer = await CustomerModel.findOne(
-    getCustomerOwnershipQuery(id, brokerId, brokerIdStr)
-  );
-
-  if (!customer) {
-    return res.status(404).json({
-      success: false,
-      message: 'Client not found.',
-    });
-  }
-
-  customer.status = 'blocked';
-  customer.block_reason = reason || 'Blocked by broker';
-  customer.trading_enabled = false;
-  await customer.save();
-
-  res.status(200).json({
-    success: true,
-    message: 'Client blocked successfully.',
-  });
-});
-
-/**
- * @desc     Unblock client
- * @route    POST /api/broker/clients/:id/unblock
- * @access   Private (Broker only)
- */
-const unblockClient = asyncHandler(async (req, res) => {
-  const brokerId = req.user._id;
-  const brokerIdStr = req.user.login_id || req.user.stringBrokerId;
-  const { id } = req.params;
-
-  const customer = await CustomerModel.findOne(
-    getCustomerOwnershipQuery(id, brokerId, brokerIdStr)
-  );
-
-  if (!customer) {
-    return res.status(404).json({
-      success: false,
-      message: 'Client not found.',
-    });
-  }
-
-  customer.status = 'active';
-  customer.trading_enabled = true;
-  customer.block_reason = undefined;
-  await customer.save();
-
-  res.status(200).json({
-    success: true,
-    message: 'Client unblocked successfully.',
-  });
-});
-
-/**
- * @desc     Toggle client trading permission
- * @route    PUT /api/broker/clients/:id/trading
- * @access   Private (Broker only)
- */
-const toggleTrading = asyncHandler(async (req, res) => {
-  const brokerId = req.user._id;
-  const brokerIdStr = req.user.login_id || req.user.stringBrokerId;
-  const { id } = req.params;
-  const { enabled, reason } = req.body;
-
-  if (typeof enabled !== 'boolean') {
-    return res.status(400).json({
-      success: false,
-      message: 'Field "enabled" (boolean) is required.',
-    });
-  }
-
-  const customer = await CustomerModel.findOne(
-    getCustomerOwnershipQuery(id, brokerId, brokerIdStr)
-  );
-
-  if (!customer) {
-    return res.status(404).json({
-      success: false,
-      message: 'Client not found.',
-    });
-  }
-
-  if (customer.status === 'blocked') {
-    return res.status(400).json({
-      success: false,
-      message: 'Cannot change trading for a blocked account. Unblock the client first.',
-    });
-  }
-
-  customer.trading_enabled = enabled;
-  customer.restriction_reason = enabled ? undefined : (reason || 'Trading stopped by broker');
-  await customer.save();
-
-  res.status(200).json({
-    success: true,
-    message: enabled ? 'Trading enabled for client.' : 'Trading stopped for client.',
-    tradingEnabled: customer.trading_enabled,
   });
 });
 
@@ -1404,52 +1299,6 @@ const setClientSettlement = asyncHandler(async (req, res) => {
 });
 
 /**
- * @desc     Enable or disable fault injection (glitch mode) for a client
- * @route    PUT /api/broker/clients/:id/glitch
- * @access   Private (Broker only)
- */
-const toggleGlitch = asyncHandler(async (req, res) => {
-  const brokerId = req.user._id;
-  const brokerIdStr = req.user.login_id || req.user.stringBrokerId;
-  const { id } = req.params;
-  const { enabled } = req.body || {};
-
-  if (typeof enabled !== 'boolean') {
-    return res.status(400).json({
-      success: false,
-      message: 'Field "enabled" (boolean) is required.',
-    });
-  }
-
-  const customer = await CustomerModel.findOne(
-    getCustomerOwnershipQuery(id, brokerId, brokerIdStr)
-  );
-
-  if (!customer) {
-    return res.status(404).json({ success: false, message: 'Client not found.' });
-  }
-
-  customer.glitch_enabled = enabled;
-  if (enabled) {
-    customer.glitch_enabled_by = brokerId;
-    customer.glitch_enabled_at = new Date();
-    customer.glitch_disabled_at = undefined;
-  } else {
-    customer.glitch_enabled_by = undefined;
-    customer.glitch_enabled_at = undefined;
-    customer.glitch_disabled_at = new Date();
-  }
-
-  await customer.save();
-
-  res.status(200).json({
-    success: true,
-    message: enabled ? 'Fault injection enabled for client.' : 'Fault injection disabled for client.',
-    glitchEnabled: customer.glitch_enabled,
-  });
-});
-
-/**
  * @desc     Broker-only silent holdings quantity/lots correction
  * @route    PUT /api/broker/clients/:id/orders/:orderId/holding-adjustment
  * @access   Private (Broker only)
@@ -1598,9 +1447,6 @@ export {
   createClient,
   updateClient,
   deleteClient,
-  blockClient,
-  unblockClient,
-  toggleTrading,
   toggleHoldingsExit,
   toggleOrderExitAllowed,
   loginAsClient,
@@ -1615,6 +1461,5 @@ export {
   convertOrderToHold,
   extendOrderValidity,
   setClientSettlement,
-  toggleGlitch,
   adjustHolding,
 };

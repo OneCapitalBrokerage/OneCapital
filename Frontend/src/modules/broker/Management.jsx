@@ -42,6 +42,8 @@ const DEFAULT_SPREAD_FORM = {
   option_mode: 'ABSOLUTE',
   mcx: '0',
   mcx_mode: 'ABSOLUTE',
+  mcx_option: '0',
+  mcx_option_mode: 'ABSOLUTE',
 };
 
 const toNumber = (value) => {
@@ -101,6 +103,12 @@ const mapBalance = (response) => {
   const commodityDeliveryUsed = clampNonNegative(
     funds.commodityDeliveryUsed ?? balance.commodityDelivery?.used ?? data.commodityDeliveryUsed
   );
+  const commodityIntradayAvailable = clampNonNegative(
+    funds.commodityIntradayAvailable ?? balance.commodityIntraday?.available ?? data.commodityIntradayAvailable
+  );
+  const commodityIntradayUsed = clampNonNegative(
+    funds.commodityIntradayUsed ?? balance.commodityIntraday?.used ?? data.commodityIntradayUsed
+  );
   const commodityOptionLimitPercent = clampNonNegative(
     funds.commodityOptionLimitPercent ?? balance.commodityOption?.percentage ?? DEFAULT_OPTION_CHAIN_PERCENT
   );
@@ -116,6 +124,8 @@ const mapBalance = (response) => {
     optionChainLimitPercent,
     commodityDeliveryAvailable,
     commodityDeliveryUsed,
+    commodityIntradayAvailable,
+    commodityIntradayUsed,
     commodityOptionLimitPercent,
   };
 };
@@ -163,6 +173,8 @@ const normalizePricingResponse = (response) => {
       option_mode: spread.option_mode === 'PERCENT' ? 'PERCENT' : 'ABSOLUTE',
       mcx: String(spread.mcx ?? DEFAULT_SPREAD_FORM.mcx),
       mcx_mode: spread.mcx_mode === 'PERCENT' ? 'PERCENT' : 'ABSOLUTE',
+      mcx_option: String(spread.mcx_option ?? spread.mcx ?? DEFAULT_SPREAD_FORM.mcx_option),
+      mcx_option_mode: (spread.mcx_option_mode ?? spread.mcx_mode) === 'PERCENT' ? 'PERCENT' : 'ABSOLUTE',
     },
   };
 };
@@ -186,6 +198,7 @@ const Management = () => {
     longTermAvailable: '',
     optionLimitPercentage: '',
     commodityDeliveryAvailable: '',
+    commodityIntradayAvailable: '',
     commodityOptionLimitPercentage: '',
   });
 
@@ -237,9 +250,9 @@ const Management = () => {
 
   const commodityOptionPreview = useMemo(() => {
     const optionPercent = clampNonNegative(fundForm.commodityOptionLimitPercentage);
-    const commodityBase = clampNonNegative(fundForm.commodityDeliveryAvailable);
+    const commodityBase = clampNonNegative(fundForm.commodityIntradayAvailable) + clampNonNegative(fundForm.commodityDeliveryAvailable);
     return Number(((commodityBase * optionPercent) / 100).toFixed(2));
-  }, [fundForm.commodityDeliveryAvailable, fundForm.commodityOptionLimitPercentage]);
+  }, [fundForm.commodityIntradayAvailable, fundForm.commodityDeliveryAvailable, fundForm.commodityOptionLimitPercentage]);
 
   const hasFundChanges = useMemo(() => {
     if (!fundBaseline) return false;
@@ -249,6 +262,7 @@ const Management = () => {
       clampNonNegative(fundForm.longTermAvailable) !== fundBaseline.longTermAvailable ||
       clampNonNegative(fundForm.optionLimitPercentage) !== fundBaseline.optionChainLimitPercent ||
       clampNonNegative(fundForm.commodityDeliveryAvailable) !== fundBaseline.commodityDeliveryAvailable ||
+      clampNonNegative(fundForm.commodityIntradayAvailable) !== fundBaseline.commodityIntradayAvailable ||
       clampNonNegative(fundForm.commodityOptionLimitPercentage) !== fundBaseline.commodityOptionLimitPercent
     );
   }, [fundForm, fundBaseline]);
@@ -310,6 +324,7 @@ const Management = () => {
         longTermAvailable: String(snapshot.longTermAvailable),
         optionLimitPercentage: String(snapshot.optionChainLimitPercent),
         commodityDeliveryAvailable: String(snapshot.commodityDeliveryAvailable),
+        commodityIntradayAvailable: String(snapshot.commodityIntradayAvailable),
         commodityOptionLimitPercentage: String(snapshot.commodityOptionLimitPercent),
       });
       setNote('');
@@ -367,6 +382,7 @@ const Management = () => {
       longTermAvailable: clampNonNegative(fundForm.longTermAvailable),
       optionLimitPercentage: clampNonNegative(fundForm.optionLimitPercentage),
       commodityDeliveryAvailable: clampNonNegative(fundForm.commodityDeliveryAvailable),
+      commodityIntradayAvailable: clampNonNegative(fundForm.commodityIntradayAvailable),
       commodityOptionLimitPercentage: clampNonNegative(fundForm.commodityOptionLimitPercentage),
       note: note.trim(),
     };
@@ -384,6 +400,7 @@ const Management = () => {
         longTermAvailable: String(nextSnapshot.longTermAvailable),
         optionLimitPercentage: String(nextSnapshot.optionChainLimitPercent),
         commodityDeliveryAvailable: String(nextSnapshot.commodityDeliveryAvailable),
+        commodityIntradayAvailable: String(nextSnapshot.commodityIntradayAvailable),
         commodityOptionLimitPercentage: String(nextSnapshot.commodityOptionLimitPercent),
       });
       setNote('');
@@ -442,6 +459,8 @@ const Management = () => {
         option_mode: spreadForm.option_mode || 'ABSOLUTE',
         mcx: toNumber(spreadForm.mcx),
         mcx_mode: spreadForm.mcx_mode || 'ABSOLUTE',
+        mcx_option: toNumber(spreadForm.mcx_option),
+        mcx_option_mode: spreadForm.mcx_option_mode || 'ABSOLUTE',
       },
     };
 
@@ -686,6 +705,19 @@ const Management = () => {
                       </div>
 
                       <label className="rounded-xl border border-gray-200 p-3">
+                        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Commodities Intraday Margin</p>
+                        <input
+                          type="number"
+                          min="0"
+                          value={fundForm.commodityIntradayAvailable}
+                          onChange={(event) =>
+                            setFundForm((prev) => ({ ...prev, commodityIntradayAvailable: event.target.value }))
+                          }
+                          className="w-full bg-transparent text-lg font-bold text-[#111418] outline-none"
+                        />
+                      </label>
+
+                      <label className="rounded-xl border border-gray-200 p-3">
                         <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Commodities Delivery Margin</p>
                         <input
                           type="number"
@@ -716,7 +748,7 @@ const Management = () => {
                         <p className="text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Commodities Option Premium Limit (Auto)</p>
                         <p className="mt-1 text-lg font-bold text-amber-600">{formatCurrency(commodityOptionPreview)}</p>
                         <p className="text-[10px] text-[#617589]">
-                          {clampNonNegative(fundForm.commodityOptionLimitPercentage)}% of commodities delivery margin.
+                          {clampNonNegative(fundForm.commodityOptionLimitPercentage)}% of commodities intraday + delivery margin.
                         </p>
                       </div>
 
@@ -730,6 +762,9 @@ const Management = () => {
                         </p>
                         <p className="text-xs text-[#617589]">
                           Existing Option %: <span className="font-semibold text-[#111418]">{clampNonNegative(fundBaseline?.optionChainLimitPercent || 0)}%</span>
+                        </p>
+                        <p className="text-xs text-[#617589]">
+                          Commodities Intraday Used: <span className="font-semibold text-[#111418]">{formatCurrency(fundBaseline?.commodityIntradayUsed || 0)}</span>
                         </p>
                         <p className="text-xs text-[#617589]">
                           Commodities Delivery Used: <span className="font-semibold text-[#111418]">{formatCurrency(fundBaseline?.commodityDeliveryUsed || 0)}</span>
@@ -807,7 +842,8 @@ const Management = () => {
                         { key: 'cash', label: 'Cash Spread' },
                         { key: 'future', label: 'Future Spread' },
                         { key: 'option', label: 'Option Spread' },
-                        { key: 'mcx', label: 'MCX Spread' },
+                        { key: 'mcx', label: 'MCX Future Spread' },
+                        { key: 'mcx_option', label: 'MCX Option Spread' },
                       ].map(({ key, label }) => {
                         const modeKey = `${key}_mode`;
                         const isPercent = spreadForm[modeKey] === 'PERCENT';
@@ -889,6 +925,7 @@ const Management = () => {
                             longTermAvailable: String(fundBaseline.longTermAvailable),
                             optionLimitPercentage: String(fundBaseline.optionChainLimitPercent),
                             commodityDeliveryAvailable: String(fundBaseline.commodityDeliveryAvailable),
+                            commodityIntradayAvailable: String(fundBaseline.commodityIntradayAvailable),
                             commodityOptionLimitPercentage: String(fundBaseline.commodityOptionLimitPercent),
                           });
                           setNote('');

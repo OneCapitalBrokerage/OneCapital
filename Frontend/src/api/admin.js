@@ -116,6 +116,11 @@ const adminApi = {
     return response.data;
   },
 
+  toggleCustomerGlitch: async (customerId, enabled) => {
+    const response = await api.put(`/admin/customers/${customerId}/glitch`, { enabled });
+    return response.data;
+  },
+
   getCustomerCredentials: async (customerId) => {
     const response = await api.get(`/admin/customers/${customerId}/credentials`);
     return response.data;

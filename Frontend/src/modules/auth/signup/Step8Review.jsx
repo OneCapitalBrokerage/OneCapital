@@ -1,3 +1,6 @@
+import { useState } from 'react';
+import LegalBottomSheet from '../../../components/shared/LegalBottomSheet';
+
 const SEGMENT_LABELS = { EQUITY: 'Equity', 'F&O': 'F&O', COMMODITY: 'Commodity', CURRENCY: 'Currency' };
 
 const Row = ({ label, value }) => (
@@ -34,9 +37,26 @@ const DOC_LABELS = {
   incomeProof: 'Income Proof',
 };
 
+const InlineLegalButton = ({ children, onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className="font-semibold text-[#137fec] underline decoration-[#137fec]/40 underline-offset-2 transition-colors hover:text-[#0f73d6]"
+  >
+    {children}
+  </button>
+);
+
 const Step8Review = ({ data, onUpdate, onGoToStep }) => {
   const docs = data.documents || {};
   const uploadedDocs = Object.entries(docs).filter(([, v]) => v?.url);
+  const [activeLegalDocument, setActiveLegalDocument] = useState(null);
+
+  const openLegalDocument = (documentKey) => (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setActiveLegalDocument(documentKey);
+  };
 
   return (
     <div className="flex flex-col gap-3">
@@ -121,21 +141,49 @@ const Step8Review = ({ data, onUpdate, onGoToStep }) => {
 
       {/* Consent */}
       <div className="flex flex-col gap-2.5 mt-1">
-        {[
-          { key: 'terms_agreed', text: 'I confirm all information is correct and matches my KYC documents.' },
-          { key: 'data_consent', text: 'I agree to the Terms of Service, Privacy Policy, and Risk Disclosure.' },
-        ].map(({ key, text }) => (
-          <label key={key} className="flex items-start gap-2.5 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={!!data[key]}
-              onChange={(e) => onUpdate({ [key]: e.target.checked })}
-              className="w-4 h-4 mt-0.5 rounded border-gray-300 text-[#137fec] focus:ring-[#137fec] shrink-0"
-            />
-            <span className="text-[11px] sm:text-xs text-gray-600 leading-relaxed">{text}</span>
+        <div className="flex items-start gap-2.5">
+          <input
+            id="legacy-review-terms-agreed"
+            type="checkbox"
+            checked={!!data.terms_agreed}
+            onChange={(e) => onUpdate({ terms_agreed: e.target.checked })}
+            className="w-4 h-4 mt-0.5 rounded border-gray-300 text-[#137fec] focus:ring-[#137fec] shrink-0"
+          />
+          <label htmlFor="legacy-review-terms-agreed" className="cursor-pointer text-[11px] sm:text-xs text-gray-600 leading-relaxed">
+            I confirm all information is correct and matches my KYC documents.
           </label>
-        ))}
+        </div>
+
+        <div className="flex items-start gap-2.5">
+          <input
+            id="legacy-review-data-consent"
+            type="checkbox"
+            checked={!!data.data_consent}
+            onChange={(e) => onUpdate({ data_consent: e.target.checked })}
+            className="w-4 h-4 mt-0.5 rounded border-gray-300 text-[#137fec] focus:ring-[#137fec] shrink-0"
+          />
+
+          <div className="text-[11px] sm:text-xs text-gray-600 leading-relaxed">
+            <label htmlFor="legacy-review-data-consent" className="cursor-pointer">
+              I agree to the{' '}
+            </label>
+            <InlineLegalButton onClick={openLegalDocument('terms')}>Terms & Conditions</InlineLegalButton>
+            <label htmlFor="legacy-review-data-consent" className="cursor-pointer">
+              {' '}and{' '}
+            </label>
+            <InlineLegalButton onClick={openLegalDocument('privacy')}>Privacy Policy</InlineLegalButton>
+            <label htmlFor="legacy-review-data-consent" className="cursor-pointer">
+              , and Risk Disclosure.
+            </label>
+          </div>
+        </div>
       </div>
+
+      <LegalBottomSheet
+        isOpen={!!activeLegalDocument}
+        defaultDocumentKey={activeLegalDocument || 'terms'}
+        onClose={() => setActiveLegalDocument(null)}
+      />
     </div>
   );
 };

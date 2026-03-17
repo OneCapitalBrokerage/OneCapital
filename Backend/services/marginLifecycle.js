@@ -85,11 +85,11 @@ const emitMarginAudit = ({
  */
 export function getMarginBucket(product, { exchange, segment } = {}) {
   const p = String(product).trim().toUpperCase();
+  const mcx = isMCX({ exchange, segment });
   if (p === 'CNC' || p === 'NRML') {
-    if (isMCX({ exchange, segment })) return 'commodity_delivery';
-    return 'delivery';
+    return mcx ? 'commodity_delivery' : 'delivery';
   }
-  return 'intraday';
+  return mcx ? 'commodity_intraday' : 'intraday';
 }
 
 /**
@@ -113,6 +113,15 @@ export function reserveMargin(fund, bucket, amount) {
       };
     }
     fund.intraday.used_limit = toNumber(fund.intraday.used_limit) + amount;
+  } else if (bucket === 'commodity_intraday') {
+    const available = toNumber(fund.commodity_intraday?.available_limit) - toNumber(fund.commodity_intraday?.used_limit);
+    if (amount > available) {
+      return {
+        ok: false,
+        error: `Insufficient Commodities Intraday Margin! Required: ${amount.toFixed(2)}, Available: ${available.toFixed(2)}`,
+      };
+    }
+    fund.commodity_intraday.used_limit = toNumber(fund.commodity_intraday.used_limit) + amount;
   } else if (bucket === 'commodity_delivery') {
     const available = toNumber(fund.commodity_delivery?.available_limit) - toNumber(fund.commodity_delivery?.used_limit);
     if (amount > available) {
@@ -161,10 +170,14 @@ export function releaseMarginOnClose(fund, order, opts = {}) {
   const amount = toNumber(order.margin_blocked);
   if (amount <= 0) return;
 
-  const bucket = getMarginBucket(order.product, { exchange: order.exchange, segment: order.segment });
+  const bucket = opts.bucketOverride
+    || order.meta?.margin_hold?.bucket
+    || getMarginBucket(order.product, { exchange: order.exchange, segment: order.segment });
 
   if (bucket === 'intraday') {
     fund.intraday.used_limit = Math.max(0, toNumber(fund.intraday.used_limit) - amount);
+  } else if (bucket === 'commodity_intraday') {
+    fund.commodity_intraday.used_limit = Math.max(0, toNumber(fund.commodity_intraday?.used_limit) - amount);
   } else if (bucket === 'commodity_delivery') {
     fund.commodity_delivery.used_limit = Math.max(0, toNumber(fund.commodity_delivery?.used_limit) - amount);
   } else {
@@ -203,6 +216,8 @@ export function refundMarginImmediate(fund, bucket, amount, opts = {}) {
 
   if (bucket === 'intraday') {
     fund.intraday.used_limit = Math.max(0, toNumber(fund.intraday.used_limit) - amount);
+  } else if (bucket === 'commodity_intraday') {
+    fund.commodity_intraday.used_limit = Math.max(0, toNumber(fund.commodity_intraday?.used_limit) - amount);
   } else if (bucket === 'commodity_delivery') {
     fund.commodity_delivery.used_limit = Math.max(0, toNumber(fund.commodity_delivery?.used_limit) - amount);
   } else {
@@ -358,6 +373,28 @@ export function midnightResetIntraday(fund) {
 }
 
 /**
+ * Midnight reset for commodity intraday margin (MCX MIS).
+ * Unconditionally resets commodity_intraday.used_limit to 0.
+ *
+ * @param {Object} fund - Mongoose fund document (mutated in-memory)
+ */
+export function midnightResetCommodityIntraday(fund) {
+  const previousUsed = toNumber(fund.commodity_intraday?.used_limit);
+  fund.commodity_intraday.used_limit = 0;
+
+  if (previousUsed > 0) {
+    fund.transactions.push({
+      type: 'margin_released_midnight_commodity_intraday',
+      amount: round2(previousUsed),
+      notes: `Midnight commodity intraday margin reset: ₹${previousUsed.toFixed(2)} released`,
+      status: 'completed',
+      timestamp: new Date(),
+    });
+  }
+  fund.last_calculated_at = new Date();
+}
+
+/**
  * Midnight release for delivery margin.
  * Only releases if ALL CNC/NRML/HOLD orders are closed for the customer.
  *
@@ -431,8 +468,9 @@ export function midnightReleaseCommodityDelivery(fund, activeMcxDeliveryCount) {
  * @param {string} brokerIdStr - Broker ID string
  */
 export async function runMidnightMarginReset(fund, customerIdStr, brokerIdStr) {
-  // 1. Always reset intraday
+  // 1. Always reset intraday (equity + commodity)
   midnightResetIntraday(fund);
+  midnightResetCommodityIntraday(fund);
 
   // 2. Conditionally release equity delivery
   const activeDeliveryOrders = await Order.countDocuments({
