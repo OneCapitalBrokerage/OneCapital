@@ -446,6 +446,32 @@ const rejectRegistration = asyncHandler(async (req, res) => {
 });
 
 /**
+ * @desc    Delete a single registration record
+ * @route   DELETE /api/broker/registrations/:id
+ * @access  Private (Broker only)
+ */
+const deleteRegistration = asyncHandler(async (req, res) => {
+  const brokerIdStr = req.user.login_id || req.user.stringBrokerId;
+  const { id } = req.params;
+
+  const registration = await RegistrationModel.findOne({
+    _id: id,
+    broker_id_str: brokerIdStr,
+  });
+
+  if (!registration) {
+    return res.status(404).json({ success: false, message: 'Registration not found.' });
+  }
+
+  await RegistrationModel.deleteOne({ _id: id, broker_id_str: brokerIdStr });
+
+  res.status(200).json({
+    success: true,
+    message: 'Registration record deleted successfully.',
+  });
+});
+
+/**
  * @desc    Get registration counts by status (for dashboard badge)
  * @route   GET /api/broker/registrations/stats
  * @access  Private (Broker only)
@@ -472,5 +498,6 @@ export {
   getRegistrationDetail,
   approveRegistration,
   rejectRegistration,
+  deleteRegistration,
   getRegistrationStats,
 };

@@ -8,6 +8,7 @@ import {
   getRegistrationDetail,
   approveRegistration,
   rejectRegistration,
+  deleteRegistration,
   getRegistrationStats,
 } from '../../Controllers/broker/RegistrationController.js';
 
@@ -49,5 +50,12 @@ router.post('/registrations/:id/approve', approveRegistration);
  * @access  Private (Broker only)
  */
 router.post('/registrations/:id/reject', rejectRegistration);
+
+/**
+ * @route   DELETE /api/broker/registrations/:id
+ * @desc    Delete a single registration record
+ * @access  Private (Broker only)
+ */
+router.delete('/registrations/:id', deleteRegistration);
 
 export default router;

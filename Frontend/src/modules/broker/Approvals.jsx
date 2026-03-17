@@ -338,6 +338,7 @@ const Approvals = () => {
   const [rejectReason, setRejectReason] = useState('');
   const [registrationFilter, setRegistrationFilter] = useState('actionable');
   const [selectedRegistrationId, setSelectedRegistrationId] = useState(null);
+  const [deletingRegId, setDeletingRegId] = useState(null);
 
   const [stats, setStats] = useState({
     kycPending: 0,
@@ -476,6 +477,34 @@ const Approvals = () => {
       console.error('Failed to reject:', err);
     } finally {
       setActionLoading(null);
+    }
+  };
+
+  const handleDeleteRegistration = async (e, regId) => {
+    e.stopPropagation();
+    if (!window.confirm('Are you sure you want to delete this registration record? This action cannot be undone.')) return;
+    setDeletingRegId(regId);
+    try {
+      await brokerApi.deleteRegistration(regId);
+      setRegistrations((prev) => prev.filter((r) => r.id !== regId));
+      await brokerApi.getRegistrationStats().then((res) => {
+        const s = res.stats || {};
+        setRegistrationStats({
+          pending: toFiniteNumber(s.pending),
+          under_review: toFiniteNumber(s.under_review),
+          approved: toFiniteNumber(s.approved),
+          rejected: toFiniteNumber(s.rejected),
+          total: toFiniteNumber(s.total),
+        });
+        setStats((prev) => ({
+          ...prev,
+          registrationPending: toFiniteNumber(s.pending) + toFiniteNumber(s.under_review),
+        }));
+      }).catch(() => {});
+    } catch (err) {
+      alert(err?.response?.data?.message || 'Failed to delete registration. Please try again.');
+    } finally {
+      setDeletingRegId(null);
     }
   };
 
@@ -862,23 +891,42 @@ const Approvals = () => {
               </div>
             ) : (
               filteredRegistrations.map((reg) => (
-                <button
+                <div
                   key={reg.id}
-                  onClick={() => setSelectedRegistrationId(reg.id)}
-                  className="w-full text-left bg-white rounded-xl border border-gray-100 shadow-sm p-3 sm:p-4"
+                  className="w-full text-left bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden"
                 >
-                  <div className="flex items-start justify-between gap-2 mb-2">
-                    <div className="min-w-0">
-                      <p className="text-[#111418] font-semibold text-sm truncate">{reg.name || '—'}</p>
-                      <p className="text-[#617589] text-xs mt-0.5 truncate">{reg.email || reg.phone || '—'}</p>
+                  <button
+                    onClick={() => setSelectedRegistrationId(reg.id)}
+                    className="w-full text-left p-3 sm:p-4"
+                  >
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="min-w-0">
+                        <p className="text-[#111418] font-semibold text-sm truncate">{reg.name || '—'}</p>
+                        <p className="text-[#617589] text-xs mt-0.5 truncate">{reg.email || reg.phone || '—'}</p>
+                      </div>
+                      <RegistrationStatusBadge status={reg.status} />
                     </div>
-                    <RegistrationStatusBadge status={reg.status} />
+                    <div className="flex items-center gap-2 text-[11px] text-gray-400">
+                      {reg.panNumber && <span className="font-mono">{reg.panNumber}</span>}
+                      <span className="ml-auto">{new Date(reg.submittedAt).toLocaleDateString('en-IN', { dateStyle: 'medium' })}</span>
+                    </div>
+                  </button>
+                  <div className="flex items-center justify-end px-3 pb-2 sm:px-4 sm:pb-3">
+                    <button
+                      onClick={(e) => handleDeleteRegistration(e, reg.id)}
+                      disabled={deletingRegId === reg.id}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] sm:text-xs font-semibold text-red-500 hover:bg-red-50 border border-red-100 transition-colors disabled:opacity-50"
+                      title="Delete this registration"
+                    >
+                      {deletingRegId === reg.id ? (
+                        <div className="w-3.5 h-3.5 border-2 border-red-200 border-t-red-500 rounded-full animate-spin" />
+                      ) : (
+                        <span className="material-symbols-outlined text-[16px]">delete</span>
+                      )}
+                      {deletingRegId === reg.id ? 'Deleting...' : 'Delete'}
+                    </button>
                   </div>
-                  <div className="flex items-center gap-2 text-[11px] text-gray-400">
-                    {reg.panNumber && <span className="font-mono">{reg.panNumber}</span>}
-                    <span className="ml-auto">{new Date(reg.submittedAt).toLocaleDateString('en-IN', { dateStyle: 'medium' })}</span>
-                  </div>
-                </button>
+                </div>
               ))
             )}
           </div>

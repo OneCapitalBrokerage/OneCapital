@@ -404,6 +404,11 @@ const brokerApi = {
     const response = await api.post(`/broker/registrations/${id}/reject`, { reason });
     return response.data;
   },
+
+  deleteRegistration: async (id) => {
+    const response = await api.delete(`/broker/registrations/${id}`);
+    return response.data;
+  },
 };
 
 export default brokerApi;
