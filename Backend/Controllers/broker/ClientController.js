@@ -20,6 +20,7 @@ import {
   ensureClientPricingConfig,
   normalizeClientPricing,
 } from '../../Utils/ClientPricingEngine.js';
+import { updateTriggerInWatchlist } from '../../Utils/OrderManager.js';
 
 // Utility function
 const formatDate = (date) => {
@@ -1174,6 +1175,7 @@ const convertOrderToHold = asyncHandler(async (req, res) => {
   order.validity_expires_at = validity.expiresAt;
 
   await order.save();
+  await updateTriggerInWatchlist(order);
 
   return res.status(200).json({
     success: true,

@@ -2,7 +2,7 @@
 // Enforces account-level restrictions on customer actions
 
 import CustomerModel from '../Model/Auth/CustomerModel.js';
-import { getMarketStatusForInstrument } from '../Utils/tradingSession.js';
+import { formatMarketClosedMessage, getMarketStatusForInstrument } from '../Utils/tradingSession.js';
 
 const isPrivilegedImpersonation = (req) =>
   req.user?.isImpersonation &&
@@ -18,13 +18,10 @@ const isCustomerPlacementRoute = (req) => {
 
 const buildMarketClosedPayload = ({ exchange, segment } = {}) => {
   const status = getMarketStatusForInstrument({ exchange, segment });
-  const isMcx = status.sessionType === 'MCX';
   return {
     success: false,
     code: 'MARKET_CLOSED',
-    message: isMcx
-      ? 'MCX Market Closed. Open From 9:15AM To 11:00PM On Working Days'
-      : 'Market Closed. Open From 9:15AM To 3:15PM On Working Days',
+    message: formatMarketClosedMessage({ exchange, segment }),
     marketStatus: {
       isOpen: status.isOpen,
       tradingDay: status.tradingDay,

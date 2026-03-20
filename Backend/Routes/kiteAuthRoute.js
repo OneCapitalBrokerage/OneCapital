@@ -2,6 +2,8 @@
 import express from 'express';
 import crypto from 'crypto';
 import KiteCredential from '../Model/KiteCredentialModel.js';
+import { getFeedInstance } from '../services/feedState.js';
+import { publishCredentialsUpdated } from '../sockets/io.js';
 
 const router = express.Router();
 
@@ -132,6 +134,22 @@ router.get('/callback', async (req, res) => {
     console.log(`[KiteAuth]    Access Token: ${tokenData.access_token.substring(0, 10)}...`);
     console.log(`[KiteAuth]    Expires: ${expiry.toISOString()}`);
 
+    // Trigger WebSocket reconnection with new credentials
+    const feedInstance = getFeedInstance();
+    if (feedInstance && typeof feedInstance.reconnectWithNewCredentials === 'function') {
+      // Normal mode: direct call to local feed instance
+      console.log('[KiteAuth] 🔄 Triggering WebSocket reconnection with new token...');
+      feedInstance.reconnectWithNewCredentials().catch(err => {
+        console.error('[KiteAuth] WebSocket reconnect failed:', err.message);
+      });
+    } else {
+      // Split mode: publish signal to worker via Redis
+      console.log('[KiteAuth] 📡 No local feed instance, publishing credentials_updated to worker...');
+      publishCredentialsUpdated().catch(err => {
+        console.error('[KiteAuth] Failed to publish credentials_updated:', err.message);
+      });
+    }
+
     // Return success page with token info
     res.send(`
       <html>
@@ -157,7 +175,7 @@ router.get('/callback', async (req, res) => {
           <div class="token">${tokenData.access_token}</div>
           <p class="warning">⚠️ Token is valid until 6 AM tomorrow. You'll need to login again after that.</p>
           <p>The server will automatically use this token for WebSocket connections.</p>
-          <p><strong>Restart the server</strong> to apply the new token to WebSocket connections.</p>
+          <p style="color: #27ae60;">✅ <strong>WebSocket reconnection triggered automatically.</strong> No restart needed.</p>
           <br>
           <p><a href="/api/kite/status">Check Token Status</a></p>
         </body>
@@ -482,6 +500,44 @@ router.post('/auto-login/toggle', async (req, res) => {
 
   } catch (error) {
     console.error('[KiteAuth] Auto-login toggle error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Force WebSocket to reconnect with fresh credentials from DB
+// POST /api/kite/websocket/reconnect
+router.post('/websocket/reconnect', async (req, res) => {
+  try {
+    console.log('[KiteAuth] 🔄 Manual WebSocket reconnect requested');
+
+    const feedInstance = getFeedInstance();
+
+    if (feedInstance && typeof feedInstance.reconnectWithNewCredentials === 'function') {
+      // Normal mode: direct call to local feed instance
+      console.log('[KiteAuth] Triggering direct WebSocket reconnection...');
+      await feedInstance.reconnectWithNewCredentials();
+      
+      return res.json({
+        success: true,
+        message: 'WebSocket reconnection triggered successfully',
+        mode: 'direct'
+      });
+    } else {
+      // Split mode: publish signal to worker via Redis
+      console.log('[KiteAuth] No local feed instance, publishing to worker...');
+      const published = await publishCredentialsUpdated();
+      
+      return res.json({
+        success: published,
+        message: published
+          ? 'Reconnection signal sent to worker'
+          : 'No feed instance available and Redis publish failed',
+        mode: 'redis'
+      });
+    }
+
+  } catch (error) {
+    console.error('[KiteAuth] WebSocket reconnect error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

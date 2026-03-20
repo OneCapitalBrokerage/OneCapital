@@ -6,6 +6,7 @@ import OrderDetailSheet from './OrderDetailSheet';
 import ExitOrderSheet from './ExitOrderSheet';
 import { resolveOrderPnl, getEffectiveEntryPrice } from '../../utils/calculateBrokerage';
 import { useMarketData } from '../../context/SocketContext';
+import { formatValidityTillLabel } from '../../utils/marketStatus';
 import useCustomerTradingGate from '../../hooks/useCustomerTradingGate';
 import { useAuth } from '../../context/AuthContext';
 import { readSessionCache, writeSessionCache, clearSessionCache } from '../../utils/sessionCache';
@@ -760,7 +761,7 @@ const Orders = () => {
                   {activeTab === 'holdings' && order.validity_expires_at && order.validity_mode !== 'INTRADAY_DAY' && (
                     <div className="px-3 sm:px-4 pb-1 flex items-center gap-1.5 text-[10px] sm:text-xs text-[#617589] dark:text-[#9cb7aa]">
                       <span className="material-symbols-outlined text-[14px]">schedule</span>
-                      <span>Valid till {new Date(order.validity_expires_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}{(order.exchange || '').toUpperCase().includes('MCX') || (order.segment || '').toUpperCase().includes('MCX') ? ', 11:00 PM' : ', 3:15 PM'}</span>
+                      <span>Valid till {formatValidityTillLabel(order.validity_expires_at, { exchange: order.exchange, segment: order.segment })}</span>
                       {order.validity_extended_count > 0 && (
                         <span className="text-[9px] text-[#617589]">(+{order.validity_extended_count}x extended)</span>
                       )}

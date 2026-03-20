@@ -365,6 +365,11 @@ const adminApi = {
     return response.data;
   },
 
+  reconnectWebSocket: async () => {
+    const response = await api.post('/kite/websocket/reconnect');
+    return response.data;
+  },
+
   // ========================
   // KYC STATS
   // ========================

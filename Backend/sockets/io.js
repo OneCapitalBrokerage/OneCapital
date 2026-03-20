@@ -149,6 +149,24 @@ export function setFeedUnsubscriber(fn) { feedUnsubscriber = fn; }
 export function setFeedModeSetter(fn) { feedModeSetter = fn; }
 export function setSubCommandPublisher(client) { subCommandPublisher = client; }
 
+/**
+ * Publish a credentials_updated signal to notify worker to reconnect WebSocket.
+ * Used in split mode when API instance updates the token in DB.
+ */
+export async function publishCredentialsUpdated() {
+  if (subCommandPublisher) {
+    try {
+      await subCommandPublisher.publish('kite:credentials_updated', JSON.stringify({ timestamp: Date.now() }));
+      console.log('[SubBridge] Published credentials_updated signal to worker');
+      return true;
+    } catch (err) {
+      console.error('[SubBridge] Failed to publish credentials_updated:', err.message);
+      return false;
+    }
+  }
+  return false;
+}
+
 export function retainSystemTokens(list, subscriptionType = 'quote') {
   const tokens = normalizeTokenList(list);
   if (tokens.length === 0) return;

@@ -2,8 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import customerApi from '../../api/customer';
 import { getMcxSpec } from '../../utils/mcxSpecs';
-
-const MARKET_CLOSED_TEXT = 'Market Closed. Open From 9:15AM To 3:15PM On Working Days';
+import { formatMarketClosedMessage } from '../../utils/marketStatus';
 
 const ModifyOrderSheet = ({
   isOpen,
@@ -175,7 +174,10 @@ const ModifyOrderSheet = ({
     }
   };
 
-  const resolvedClosedText = marketClosedReason || MARKET_CLOSED_TEXT;
+  const resolvedClosedText = marketClosedReason || formatMarketClosedMessage({
+    exchange: isMcx ? 'MCX' : order?.exchange,
+    segment: order?.segment,
+  });
 
   const validate = () => {
     if (marketClosedHoldingBlocked) {

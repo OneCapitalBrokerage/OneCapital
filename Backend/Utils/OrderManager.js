@@ -5,11 +5,16 @@ import { retainSystemTokens, releaseSystemTokens } from '../sockets/io.js';
 export const ORDER_TRIGGER_COMMAND_CHANNEL = 'order:trigger:commands';
 
 const TERMINAL_STATUSES = new Set(['CLOSED', 'CANCELLED', 'REJECTED', 'EXPIRED']);
+const RETAINABLE_ACTIVE_STATUSES = new Set(['OPEN', 'EXECUTED', 'PARTIALLY_FILLED', 'HOLD']);
 
 // token -> Map<orderId, triggerData>
 export const activeTriggers = new Map();
 // orderId -> token
 const orderTokenIndex = new Map();
+// orderId -> token for active order retention
+const retainedActiveOrderIndex = new Map();
+// token -> active order refcount
+const retainedActiveTokenCounts = new Map();
 
 let triggerEngineEnabled = process.env.ENABLE_ORDER_TRIGGER_ENGINE !== 'false';
 let commandPublisher = null;
@@ -49,6 +54,13 @@ const shouldTrackOrder = (orderLike) => {
   return hasRiskConfigured(orderLike);
 };
 
+const shouldRetainActiveOrder = (orderLike) => {
+  if (!orderLike) return false;
+  const status = normalizeStatus(orderLike.status ?? orderLike.order_status);
+  if (!RETAINABLE_ACTIVE_STATUSES.has(status)) return false;
+  return Boolean(normalizeToken(orderLike.instrument_token ?? orderLike.security_Id ?? orderLike.token));
+};
+
 const toTriggerData = (orderLike) => {
   const orderId = normalizeOrderId(orderLike?.orderId ?? orderLike?._id ?? orderLike?.id);
   const token = normalizeToken(orderLike?.instrument_token ?? orderLike?.security_Id ?? orderLike?.token);
@@ -77,6 +89,58 @@ const retainTokenLocal = (token) => {
 
 const releaseTokenLocal = (token) => {
   releaseSystemTokens([{ instrument_token: token }]);
+};
+
+const removeRetainedActiveOrder = (orderOrRef) => {
+  const orderId = normalizeOrderId(orderOrRef?.orderId ?? orderOrRef?._id ?? orderOrRef?.id);
+  if (!orderId) return { removed: false };
+
+  const token = retainedActiveOrderIndex.get(orderId) || normalizeToken(orderOrRef?.instrument_token ?? orderOrRef?.security_Id ?? orderOrRef?.token);
+  if (!token) {
+    retainedActiveOrderIndex.delete(orderId);
+    return { removed: false };
+  }
+
+  const prev = retainedActiveTokenCounts.get(token) || 0;
+  if (prev <= 1) {
+    if (prev > 0) {
+      retainedActiveTokenCounts.delete(token);
+      releaseTokenLocal(token);
+    }
+  } else {
+    retainedActiveTokenCounts.set(token, prev - 1);
+  }
+
+  retainedActiveOrderIndex.delete(orderId);
+  return { removed: prev > 0 };
+};
+
+const upsertRetainedActiveOrder = (orderLike) => {
+  const orderId = normalizeOrderId(orderLike?.orderId ?? orderLike?._id ?? orderLike?.id);
+  const token = normalizeToken(orderLike?.instrument_token ?? orderLike?.security_Id ?? orderLike?.token);
+
+  if (!orderId || !token || !shouldRetainActiveOrder(orderLike)) {
+    return removeRetainedActiveOrder(orderLike);
+  }
+
+  const previousToken = retainedActiveOrderIndex.get(orderId) || null;
+  if (previousToken === token) {
+    return { retained: true, token };
+  }
+
+  if (previousToken && previousToken !== token) {
+    removeRetainedActiveOrder({ _id: orderId, instrument_token: previousToken });
+  }
+
+  const nextCount = (retainedActiveTokenCounts.get(token) || 0) + 1;
+  retainedActiveTokenCounts.set(token, nextCount);
+  retainedActiveOrderIndex.set(orderId, token);
+
+  if (nextCount === 1) {
+    retainTokenLocal(token);
+  }
+
+  return { retained: true, token };
 };
 
 const removeByOrderIdLocal = (orderId, tokenHint = null) => {
@@ -188,6 +252,8 @@ export const getTriggerEngineState = () => ({
   enabled: triggerEngineEnabled,
   trackedTokens: activeTriggers.size,
   trackedOrders: orderTokenIndex.size,
+  retainedActiveTokens: retainedActiveTokenCounts.size,
+  retainedActiveOrders: retainedActiveOrderIndex.size,
   hasPublisher: Boolean(commandPublisher),
 });
 
@@ -221,6 +287,7 @@ export const applyTriggerCommand = async (command = {}) => {
 
 export const addToWatchlist = async (order) => {
   if (!order) return;
+  upsertRetainedActiveOrder(order);
   await dispatchCommand({
     type: 'UPSERT_TRIGGER',
     order: {
@@ -237,6 +304,7 @@ export const addToWatchlist = async (order) => {
 
 export const updateTriggerInWatchlist = async (order) => {
   if (!order) return;
+  upsertRetainedActiveOrder(order);
   const status = normalizeStatus(order.status || order.order_status);
   const hasRisk = hasRiskConfigured(order);
 
@@ -250,6 +318,7 @@ export const updateTriggerInWatchlist = async (order) => {
 
 export const removeFromWatchlist = async (orderOrRef) => {
   if (!orderOrRef) return;
+  removeRetainedActiveOrder(orderOrRef);
 
   const orderId = normalizeOrderId(orderOrRef.orderId ?? orderOrRef._id ?? orderOrRef.id);
   const token = normalizeToken(orderOrRef.instrument_token ?? orderOrRef.security_Id ?? orderOrRef.token);
@@ -270,16 +339,23 @@ export const loadOpenOrders = async () => {
   try {
     console.log('🔄 [OrderManager] Loading active triggers...');
 
-    const activeOrders = await Order.find({
-      status: { $nin: Array.from(TERMINAL_STATUSES) },
-      $or: [
-        { stop_loss: { $exists: true, $ne: null, $gt: 0 } },
-        { target: { $exists: true, $ne: null, $gt: 0 } },
-      ],
-    }).select('_id instrument_token security_Id side stop_loss target status order_status').lean();
+    const [activeOrders, retainedOrders] = await Promise.all([
+      Order.find({
+        status: { $nin: Array.from(TERMINAL_STATUSES) },
+        $or: [
+          { stop_loss: { $exists: true, $ne: null, $gt: 0 } },
+          { target: { $exists: true, $ne: null, $gt: 0 } },
+        ],
+      }).select('_id instrument_token security_Id side stop_loss target status order_status').lean(),
+      Order.find({
+        status: { $in: Array.from(RETAINABLE_ACTIVE_STATUSES) },
+      }).select('_id instrument_token security_Id status order_status').lean(),
+    ]);
 
     const nextActiveTriggers = new Map();
     const nextOrderTokenIndex = new Map();
+    const nextRetainedActiveOrderIndex = new Map();
+    const nextRetainedActiveTokenCounts = new Map();
 
     for (const order of activeOrders) {
       const trigger = toTriggerData(order);
@@ -296,16 +372,36 @@ export const loadOpenOrders = async () => {
       nextOrderTokenIndex.set(trigger.orderId, trigger.token);
     }
 
+    for (const order of retainedOrders) {
+      const orderId = normalizeOrderId(order._id);
+      const token = normalizeToken(order.instrument_token ?? order.security_Id);
+      if (!orderId || !token) continue;
+      if (!shouldRetainActiveOrder(order)) continue;
+
+      nextRetainedActiveOrderIndex.set(orderId, token);
+      nextRetainedActiveTokenCounts.set(token, (nextRetainedActiveTokenCounts.get(token) || 0) + 1);
+    }
+
     const previousTokens = new Set(activeTriggers.keys());
     const currentTokens = new Set(nextActiveTriggers.keys());
+    const previousRetainedTokens = new Set(retainedActiveTokenCounts.keys());
+    const currentRetainedTokens = new Set(nextRetainedActiveTokenCounts.keys());
 
     activeTriggers.clear();
     orderTokenIndex.clear();
+    retainedActiveOrderIndex.clear();
+    retainedActiveTokenCounts.clear();
     for (const [token, bucket] of nextActiveTriggers.entries()) {
       activeTriggers.set(token, bucket);
     }
     for (const [orderId, token] of nextOrderTokenIndex.entries()) {
       orderTokenIndex.set(orderId, token);
+    }
+    for (const [orderId, token] of nextRetainedActiveOrderIndex.entries()) {
+      retainedActiveOrderIndex.set(orderId, token);
+    }
+    for (const [token, count] of nextRetainedActiveTokenCounts.entries()) {
+      retainedActiveTokenCounts.set(token, count);
     }
 
     for (const token of previousTokens) {
@@ -319,7 +415,18 @@ export const loadOpenOrders = async () => {
       }
     }
 
-    console.log(`✅ [OrderManager] System ready. Tracking ${orderTokenIndex.size} order trigger(s) across ${activeTriggers.size} token(s).`);
+    for (const token of previousRetainedTokens) {
+      if (!currentRetainedTokens.has(token)) {
+        releaseTokenLocal(token);
+      }
+    }
+    for (const token of currentRetainedTokens) {
+      if (!previousRetainedTokens.has(token)) {
+        retainTokenLocal(token);
+      }
+    }
+
+    console.log(`✅ [OrderManager] System ready. Tracking ${orderTokenIndex.size} trigger order(s) across ${activeTriggers.size} trigger token(s); retained ${retainedActiveOrderIndex.size} active order(s) across ${retainedActiveTokenCounts.size} token(s).`);
   } catch (error) {
     console.error('❌ [OrderManager] Failed to load orders:', error);
   }

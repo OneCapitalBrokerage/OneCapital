@@ -50,7 +50,7 @@ const getRangeForInterval = (intervalKey) => {
   const start = new Date(now);
   start.setUTCDate(start.getUTCDate() - cfg.days);
   // Date-only format — backend (kiteHistorical.js) automatically appends
-  // 09:15:00 for start and 15:30:00 for end, giving correct market-hours ranges.
+  // session-aware market times for standard instruments vs MCX.
   return { from: formatDate(start), to: formatDate(now), type: cfg.type, interval: cfg.interval };
 };
 
@@ -158,7 +158,14 @@ const ChartView = () => {
       try {
         const endpoint = type === 'intraday' ? '/chart/getIntradayData' : '/chart/getChartData';
         const response = await api.get(endpoint, {
-          params: { instrument_token: instrumentToken, from, to, interval },
+          params: {
+            instrument_token: instrumentToken,
+            from,
+            to,
+            interval,
+            exchange: stock?.exchange,
+            segment: stock?.segment,
+          },
           signal: controller.signal,
         });
         if (!isActive) return;
@@ -180,7 +187,7 @@ const ChartView = () => {
       isActive = false;
       controller.abort();
     };
-  }, [instrumentToken, selectedInterval, customParams]);
+  }, [customParams, instrumentToken, selectedInterval, stock?.exchange, stock?.segment]);
 
   // Unix seconds of whichever candle the crosshair is currently over (null = no hover)
   const [hoveredTime, setHoveredTime] = useState(null);

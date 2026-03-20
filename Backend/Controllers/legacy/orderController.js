@@ -32,7 +32,7 @@ import {
 import { resolveOrderValidity } from "../../services/orderValidity.js";
 import { isMCX } from "../../Utils/mcx/resolver.js";
 import { logFailedOrderAttempt } from "../../Utils/OrderAttemptLogger.js";
-import { getMarketStatusForInstrument } from "../../Utils/tradingSession.js";
+import { formatMarketClosedMessage, getMarketStatusForInstrument } from "../../Utils/tradingSession.js";
 
 const toNumber = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const normalizeProduct = (value) => String(value || "").trim().toUpperCase();
@@ -60,13 +60,10 @@ const isPrivilegedImpersonation = (req) =>
 
 const marketClosedPayload = ({ exchange, segment } = {}) => {
   const marketStatus = getMarketStatusForInstrument({ exchange, segment });
-  const isMcx = marketStatus.sessionType === 'MCX';
   return {
     success: false,
     code: 'MARKET_CLOSED',
-    message: isMcx
-      ? 'MCX Market Closed. Open From 9:15AM To 11:00PM On Working Days'
-      : 'Market Closed. Open From 9:15AM To 3:15PM On Working Days',
+    message: formatMarketClosedMessage({ exchange, segment }),
     marketStatus: {
       isOpen: marketStatus.isOpen,
       tradingDay: marketStatus.tradingDay,

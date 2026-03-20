@@ -12,10 +12,11 @@ import Instrument from '../../Model/InstrumentModel.js';
  *   - from: Start date (YYYY-MM-DD or YYYY-MM-DD HH:MM:SS)
  *   - to: End date (YYYY-MM-DD or YYYY-MM-DD HH:MM:SS)
  *   - interval: Time interval (1, 5, 15, 60, day) - default: day
+ *   - exchange / segment: Optional instrument metadata for session-aware defaults
  */
 async function getChartData(req, res) {
   try {
-    const { instrument_token, symbol, from, to, interval = 'day' } = req.query;
+    const { instrument_token, symbol, from, to, interval = 'day', exchange, segment } = req.query;
 
     // Validate required parameters
     if ((!instrument_token && !symbol) || !from || !to) {
@@ -67,6 +68,8 @@ async function getChartData(req, res) {
       interval: interval,
       from: from,
       to: to,
+      exchange: instrument?.exchange || exchange,
+      segment: instrument?.segment || segment,
       continuous: false
     });
 
@@ -121,10 +124,11 @@ async function getChartData(req, res) {
  *   - to: End datetime (YYYY-MM-DD HH:MM:SS or ISO string)
  *   - interval: Time interval in minutes (1, 3, 5, 10, 15, 30, or 60) - default: 5
  *   - oi: Include Open Interest (optional, boolean)
+ *   - exchange / segment: Optional instrument metadata for session-aware defaults
  */
 async function getIntradayData(req, res) {
   try {
-    const { instrument_token, symbol, from, to, interval = '5', oi = 'false' } = req.query;
+    const { instrument_token, symbol, from, to, interval = '5', oi = 'false', exchange, segment } = req.query;
 
     // Validate required parameters
     if ((!instrument_token && !symbol) || !from || !to) {
@@ -181,6 +185,8 @@ async function getIntradayData(req, res) {
       interval: interval,
       from: from,
       to: to,
+      exchange: instrument?.exchange || exchange,
+      segment: instrument?.segment || segment,
       oi: oi === 'true' || oi === true
     });
 

@@ -6,6 +6,7 @@ import OrderDetailSheet from '../customer/OrderDetailSheet';
 import { resolveOrderPnl, getEffectiveEntryPrice } from '../../utils/calculateBrokerage';
 import { useMarketData } from '../../context/SocketContext';
 import customerApi from '../../api/customer';
+import { formatValidityTillLabel } from '../../utils/marketStatus';
 
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
@@ -751,7 +752,12 @@ const ClientDetail = () => {
                 new Date(order.validity_expires_at) <= new Date(Date.now() + 24 * 60 * 60 * 1000)
                   ? 'text-amber-600' : 'text-[#111418]'
               }`}>
-                {new Date(order.validity_expires_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                {formatValidityTillLabel(order.validity_expires_at, {
+                  exchange: order.exchange,
+                  segment: order.segment,
+                }, {
+                  withYear: false,
+                })}
                 {order.validity_extended_count > 0 && (
                   <span className="ml-1 text-[9px] text-[#617589]">(+{order.validity_extended_count}x)</span>
                 )}

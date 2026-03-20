@@ -1,10 +1,17 @@
 // services/KiteWebSocket.js
 // Kite Connect WebSocket wrapper using official kiteconnectjs library
 
+import crypto from 'crypto';
 import { KiteTicker } from 'kiteconnect';
 import { getIO } from "../sockets/io.js";
 import { onMarketTick } from "../Utils/OrderManager.js";
 import KiteCredential from "../Model/KiteCredentialModel.js";
+
+// Helper to generate a short fingerprint from access_token for comparison
+const tokenFingerprint = (accessToken) => {
+  if (!accessToken) return null;
+  return crypto.createHash('sha256').update(accessToken).digest('hex').substring(0, 16);
+};
 
 const roomFor = (token) => `sec:${token}`;
 const MODE_PRIORITY = Object.freeze({
@@ -56,6 +63,9 @@ export class KiteWebSocket {
     this.tickTraceLogged = 0;
     this.tickTraceSeqByToken = new Map();
     this._reconnectReplay = null;
+    // Token rotation support: prevent duplicate reconnects and track current token
+    this._currentTokenFingerprint = null;
+    this._reconnectLock = false;
   }
 
   get ns() {
@@ -98,6 +108,10 @@ export class KiteWebSocket {
         console.error("   Please login again via /api/kite/login-url");
       }
 
+      // Track token fingerprint to detect changes
+      const newFingerprint = tokenFingerprint(access_token);
+      this._currentTokenFingerprint = newFingerprint;
+
       // Initialize KiteTicker
       this.ticker = new KiteTicker({
         api_key: api_key,
@@ -113,6 +127,7 @@ export class KiteWebSocket {
       // Connect
       console.log("[KiteWS] Connecting to Kite WebSocket...");
       console.log(`[KiteWS]   User: ${credential.user_id || 'unknown'}`);
+      console.log(`[KiteWS]   Token fingerprint: ${newFingerprint}`);
       console.log(`[KiteWS]   Token expires: ${credential.token_expiry ? new Date(credential.token_expiry).toLocaleString() : 'unknown'}`);
       this.ticker.connect();
 
@@ -275,10 +290,37 @@ export class KiteWebSocket {
   }
 
   /**
-   * Reconnect with fresh credentials from database
+   * Reconnect with fresh credentials from database.
+   * Called after token rotation to reload the new access_token.
+   * Uses a lock to prevent concurrent reconnects and fingerprint check to avoid no-op reconnects.
    */
   async reconnectWithNewCredentials() {
+    // Prevent concurrent reconnect calls
+    if (this._reconnectLock) {
+      console.log("[KiteWS] 🔒 Reconnect already in progress, skipping duplicate call");
+      return;
+    }
+
     try {
+      this._reconnectLock = true;
+
+      // Check if token actually changed by comparing fingerprints
+      const credential = await KiteCredential.findOne({ is_active: true }).lean();
+      if (!credential || !credential.access_token) {
+        console.warn("[KiteWS] No active credentials found, cannot reconnect");
+        return;
+      }
+
+      const newFingerprint = tokenFingerprint(credential.access_token);
+      const oldFingerprint = this._currentTokenFingerprint;
+
+      if (newFingerprint === oldFingerprint && this.isConnected) {
+        console.log(`[KiteWS] Token unchanged (fingerprint: ${newFingerprint}), skipping reconnect`);
+        return;
+      }
+
+      console.log(`[KiteWS] 🔄 Token rotation detected: ${oldFingerprint || 'none'} -> ${newFingerprint}`);
+
       // Close existing connection if any
       if (this.ticker) {
         try {
@@ -302,6 +344,8 @@ export class KiteWebSocket {
       console.error("[KiteWS] Error during reconnection:", error.message);
       // Don't crash - schedule another attempt
       this.scheduleRecovery(120000); // 2 minutes
+    } finally {
+      this._reconnectLock = false;
     }
   }
 

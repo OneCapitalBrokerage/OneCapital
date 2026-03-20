@@ -1,6 +1,32 @@
 import placeMarketOrder from "./placeMarketOrder.js";
 
-export async function attemptSquareoff(order) {
+const IST_OFFSET_MINUTES = 330;
+
+function setISTTime(date, hour, minute) {
+  const base = new Date(date);
+  const istMs = base.getTime() + IST_OFFSET_MINUTES * 60 * 1000;
+  const istDate = new Date(istMs);
+  const year = istDate.getUTCFullYear();
+  const month = istDate.getUTCMonth();
+  const day = istDate.getUTCDate();
+  return new Date(Date.UTC(year, month, day, hour, minute, 0, 0) - IST_OFFSET_MINUTES * 60 * 1000);
+}
+
+function deriveIntradayCutoff(order, fallback = new Date()) {
+  const base = order?.validity_started_at || order?.placed_at || order?.createdAt || fallback;
+  const exchange = String(order?.exchange || '').toUpperCase();
+  const segment = String(order?.segment || '').toUpperCase();
+  const isMcx = exchange.includes('MCX') || segment.includes('MCX');
+  return isMcx ? setISTTime(base, 23, 0) : setISTTime(base, 15, 15);
+}
+
+function coerceClosedAt(value, fallback = new Date()) {
+  if (!value) return fallback;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed;
+}
+
+export async function attemptSquareoff(order, opts = {}) {
   if (!order) return { ok: false, reason: 'no-order' };
 
   // Use canonical schema fields (with fallback for safety)
@@ -13,7 +39,7 @@ export async function attemptSquareoff(order) {
     (productUp === 'MIS' ? 'INTRADAY' : (productUp === 'CNC' ? 'DELIVERY' : 'F&O'));
 
   const isActiveStatus = (s) => {
-    return s === 'OPEN' || s === 'EXECUTED' || s === 'HOLD' || s === null || s === undefined;
+    return s === 'OPEN' || s === 'EXECUTED' || s === 'PARTIALLY_FILLED' || s === 'HOLD' || s === null || s === undefined;
   };
 
   // Resolve expiry: prefer canonical validity_expires_at, fallback to legacy fields
@@ -54,9 +80,19 @@ export async function attemptSquareoff(order) {
 
     // CASE 1: INTRADAY (always close at market close) — skip if HOLD
     if (effectiveCategory === 'INTRADAY' && isActiveStatus(orderStatus) && !isHold) {
+      const closedAt = coerceClosedAt(opts.closedAt || canonicalExpiry || deriveIntradayCutoff(order, now), now);
       console.log(`[Squareoff] Closing Intraday: ${order._id} (Status: ${orderStatus})`);
-      const res = await placeMarketOrder(order._id);
-      return { ok: true, action: 'closed_intraday', result: res };
+      const res = await placeMarketOrder(order._id, {
+        order,
+        snapshot: opts.snapshot || null,
+        closedAt,
+      });
+      return {
+        ok: Boolean(res?.ok),
+        action: res?.ok ? 'closed_intraday' : 'close_intraday_failed',
+        result: res,
+        reason: res?.error,
+      };
     }
 
     // CASE 1b: HOLD orders — close only when validity expires
@@ -66,9 +102,19 @@ export async function attemptSquareoff(order) {
       }
 
       if (isExpired()) {
+        const closedAt = coerceClosedAt(opts.closedAt || effectiveExpiry || now, now);
         console.log(`[Squareoff] Closing HOLD on Expiry: ${order._id} (Exp: ${effectiveExpiry.toISOString()})`);
-        const res = await placeMarketOrder(order._id);
-        return { ok: true, action: 'closed_hold_on_expiry', result: res };
+        const res = await placeMarketOrder(order._id, {
+          order,
+          snapshot: opts.snapshot || null,
+          closedAt,
+        });
+        return {
+          ok: Boolean(res?.ok),
+          action: res?.ok ? 'closed_hold_on_expiry' : 'close_hold_on_expiry_failed',
+          result: res,
+          reason: res?.error,
+        };
       } else {
         return { ok: true, action: 'hold_kept_active_future_expiry' };
       }
@@ -81,9 +127,19 @@ export async function attemptSquareoff(order) {
       }
 
       if (isExpired()) {
+        const closedAt = coerceClosedAt(opts.closedAt || effectiveExpiry || now, now);
         console.log(`[Squareoff] Closing EXPIRED Overnight: ${order._id} (Exp: ${effectiveExpiry.toISOString()})`);
-        const res = await placeMarketOrder(order._id);
-        return { ok: true, action: 'closed_expired_overnight', result: res };
+        const res = await placeMarketOrder(order._id, {
+          order,
+          snapshot: opts.snapshot || null,
+          closedAt,
+        });
+        return {
+          ok: Boolean(res?.ok),
+          action: res?.ok ? 'closed_expired_overnight' : 'close_expired_overnight_failed',
+          result: res,
+          reason: res?.error,
+        };
       } else {
         return { ok: true, action: 'kept_active_future_expiry' };
       }

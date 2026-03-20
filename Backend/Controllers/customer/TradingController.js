@@ -24,9 +24,13 @@ import {
   updateTriggerInWatchlist,
 } from '../../Utils/OrderManager.js';
 import { logFailedOrderAttempt } from '../../Utils/OrderAttemptLogger.js';
-import { getStandardMarketStatus, getMarketStatusForInstrument } from '../../Utils/tradingSession.js';
+import {
+  formatMarketClosedMessage,
+  getStandardMarketStatus,
+  getMarketStatusForInstrument,
+} from '../../Utils/tradingSession.js';
 import { releaseMarginOnClose, getMarginBucket } from '../../services/marginLifecycle.js';
-import { canBrokerExtendValidity } from '../../services/orderValidity.js';
+import { canBrokerExtendValidity, resolveOrderValidity } from '../../services/orderValidity.js';
 import { syncGlobalWatchlistTokens } from '../../sockets/io.js';
 import { normalizeMcxOrder } from '../../Utils/mcx/normalizer.js';
 import { isMCX } from '../../Utils/mcx/resolver.js';
@@ -67,13 +71,10 @@ const parseOrderDateParam = (value, endOfDay = false) => {
 
 const marketClosedPayload = ({ exchange, segment } = {}) => {
   const marketStatus = getMarketStatusForInstrument({ exchange, segment });
-  const isMcx = marketStatus.sessionType === 'MCX';
   return {
     success: false,
     code: 'MARKET_CLOSED',
-    message: isMcx
-      ? 'MCX Market Closed. Open From 9:15AM To 11:00PM On Working Days'
-      : 'Market Closed. Open From 9:15AM To 3:15PM On Working Days',
+    message: formatMarketClosedMessage({ exchange, segment }),
     marketStatus: {
       isOpen: marketStatus.isOpen,
       tradingDay: marketStatus.tradingDay,
@@ -107,7 +108,7 @@ const placeOrder = asyncHandler(async (req, res) => {
     exchange = 'NSE',
     segment,
     instrumentToken,
-    validity = 'DAY',
+    expiry,
     triggerPrice,
     disclosedQuantity,
     stopLoss,
@@ -239,7 +240,15 @@ const placeOrder = asyncHandler(async (req, res) => {
 
   if (!resolvedExchange || !resolvedSegment || toNumber(requestedLotSize, 0) <= 0) {
     instrumentDoc = await Instrument.findOne({ instrument_token: String(instrumentToken) })
-      .select('exchange segment lot_size name tick_size')
+      .select('exchange segment lot_size name tick_size expiry instrument_type')
+      .lean();
+    resolvedExchange = resolvedExchange || instrumentDoc?.exchange || 'NSE';
+    resolvedSegment = resolvedSegment || instrumentDoc?.segment || 'NSE';
+  }
+
+  if (!instrumentDoc) {
+    instrumentDoc = await Instrument.findOne({ instrument_token: String(instrumentToken) })
+      .select('exchange segment lot_size name tick_size expiry instrument_type')
       .lean();
     resolvedExchange = resolvedExchange || instrumentDoc?.exchange || 'NSE';
     resolvedSegment = resolvedSegment || instrumentDoc?.segment || 'NSE';
@@ -349,6 +358,16 @@ const placeOrder = asyncHandler(async (req, res) => {
   const requiresApproval = !isImmediate;
   const status = isImmediate ? 'EXECUTED' : 'PENDING';
   const approvalStatus = requiresApproval ? 'pending' : 'approved';
+  const placedAt = new Date();
+  const instrumentExpiry = expiry || instrumentDoc?.expiry || null;
+  const validityInfo = resolveOrderValidity({
+    product: productNorm,
+    exchange: resolvedExchange,
+    segment: resolvedSegment,
+    symbol,
+    instrumentExpiry,
+    placedAt,
+  });
 
   let order;
   try {
@@ -373,7 +392,6 @@ const placeOrder = asyncHandler(async (req, res) => {
       lot_size: resolvedLotSize,
       lots: resolvedLots,
       units_per_contract: mcxUnitsPerContract,
-      validity,
       trigger_price: triggerPriceNum,
       disclosed_quantity: disclosedQuantity,
       stop_loss: effectiveStopLossNum,
@@ -385,7 +403,19 @@ const placeOrder = asyncHandler(async (req, res) => {
       pricing_bucket: pricingBucket,
       brokerage: entryBrokerageSnapshot.amount,
       brokerage_breakdown: entryBrokerageSnapshot.breakdown,
-      placed_at: new Date(),
+      meta: {
+        selectedStock: {
+          symbol: String(symbol),
+          exchange: String(resolvedExchange || 'NSE'),
+          segment: String(resolvedSegment || 'NSE'),
+          instrument_token: String(instrumentToken),
+          expiry: instrumentExpiry || null,
+        },
+      },
+      placed_at: placedAt,
+      validity_mode: validityInfo.mode,
+      validity_started_at: validityInfo.startsAt,
+      validity_expires_at: validityInfo.expiresAt,
     });
 
     // Block margin

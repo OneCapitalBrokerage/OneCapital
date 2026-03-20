@@ -7,6 +7,7 @@ import CustomerModel from '../../Model/Auth/CustomerModel.js';
 import FundModel from '../../Model/FundManagement/FundModel.js';
 import { refundMarginImmediate, reserveMargin, getMarginBucket } from '../../services/marginLifecycle.js';
 import { resolveOrderValidity } from '../../services/orderValidity.js';
+import { removeFromWatchlist, updateTriggerInWatchlist } from '../../Utils/OrderManager.js';
 
 /**
  * @desc     Get pending CNC orders for approval
@@ -175,6 +176,7 @@ const approveCncOrder = asyncHandler(async (req, res) => {
   order.status = 'OPEN';
   order.order_status = 'OPEN';
   await order.save();
+  await updateTriggerInWatchlist(order);
 
   console.log(`[Broker] CNC order ${id} approved for client ${order.customer_id_str}`);
 
@@ -259,6 +261,7 @@ const rejectCncOrder = asyncHandler(async (req, res) => {
   }
 
   await order.save();
+  await removeFromWatchlist(order);
 
   console.log(`[Broker] CNC order ${id} rejected for client ${order.customer_id_str}: ${reason}`);
 

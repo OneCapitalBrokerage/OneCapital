@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { resolveOrderPnl, getEffectiveEntryPrice } from '../../utils/calculateBrokerage';
 import { isMcxSegment, getMcxSpec } from '../../utils/mcxSpecs';
+import { formatMarketClosedMessage } from '../../utils/marketStatus';
 
 const toNumber = (value, fallback = 0) => {
   const n = Number(value);
@@ -11,7 +12,6 @@ const toMoney = (value, fractionDigits = 2) => `₹${toNumber(value).toLocaleStr
   minimumFractionDigits: fractionDigits,
   maximumFractionDigits: fractionDigits,
 })}`;
-const MARKET_CLOSED_TEXT = 'Market Closed. Open From 9:15AM To 3:15PM On Working Days';
 
 const ExitOrderSheet = ({
   isOpen,
@@ -21,7 +21,7 @@ const ExitOrderSheet = ({
   submitting = false,
   error = null,
   marketClosedForCustomer = false,
-  marketClosedReason = MARKET_CLOSED_TEXT,
+  marketClosedReason = '',
   liveLtpRef = null,
 }) => {
   const maxQuantity = Math.max(0, Math.floor(toNumber(order?.quantity, 0)));
@@ -52,6 +52,12 @@ const ExitOrderSheet = ({
   const maxLots = lotSize > 1 ? Math.floor(maxQuantity / lotSize) : maxQuantity;
   const isLongTermHolding = product === 'CNC' || product === 'NRML';
   const isExitBlockedByMarketClose = marketClosedForCustomer && isLongTermHolding;
+  const resolvedClosedText = useMemo(() => (
+    marketClosedReason || formatMarketClosedMessage({
+      exchange: isMcx ? 'MCX' : order?.exchange,
+      segment: order?.segment,
+    })
+  ), [isMcx, marketClosedReason, order?.exchange, order?.segment]);
   const [lotsInput, setLotsInput] = useState(String(maxLots || ''));
   const [orderType, setOrderType] = useState('MARKET');
   const [localError, setLocalError] = useState(null);
@@ -128,7 +134,7 @@ const ExitOrderSheet = ({
 
   const validate = () => {
     if (isExitBlockedByMarketClose) {
-      return marketClosedReason || MARKET_CLOSED_TEXT;
+      return resolvedClosedText;
     }
     if (!exitLots || exitLots <= 0) {
       return 'Enter the number of lots to exit.';
@@ -291,7 +297,7 @@ const ExitOrderSheet = ({
 
           {isExitBlockedByMarketClose && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-amber-700 text-xs font-medium">
-              {marketClosedReason || MARKET_CLOSED_TEXT}
+              {resolvedClosedText}
             </div>
           )}
 

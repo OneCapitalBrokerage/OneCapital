@@ -94,6 +94,17 @@ if (process.env.REDIS_URL) {
           await syncGlobalWatchlistTokens();
         } catch (e) { /* ignore sync errors */ }
       });
+      await subCmdClient.subscribe('kite:credentials_updated', async () => {
+        // Token rotation happened on API instance — reload credentials and reconnect
+        try {
+          console.log('[SubBridge] 🔄 Received credentials_updated signal from API');
+          if (lmf && typeof lmf.reconnectWithNewCredentials === 'function') {
+            await lmf.reconnectWithNewCredentials();
+          }
+        } catch (e) {
+          console.error('[SubBridge] Failed to reconnect after credentials update:', e?.message || e);
+        }
+      });
       if (ENABLE_ORDER_TRIGGER_ENGINE) {
         await subCmdClient.subscribe(ORDER_TRIGGER_COMMAND_CHANNEL, async (message) => {
           try {
@@ -151,7 +162,13 @@ if (ENABLE_ORDER_TRIGGER_ENGINE) {
 }
 
 // Check and refresh token on startup if needed
-await checkAndRefreshOnStartup();
+// In split mode, only the feed-owner (worker) should run auto-login refresh
+// to avoid race conditions between API and worker instances.
+if (ENABLE_WS_FEED || !process.env.REDIS_URL) {
+  await checkAndRefreshOnStartup();
+} else {
+  console.log('[Startup] Skipping checkAndRefreshOnStartup (API-only mode, worker handles token refresh)');
+}
 
 // Connect to Kite WebSocket after DB is ready
 if (ENABLE_WS_FEED && lmf) {

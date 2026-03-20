@@ -70,11 +70,16 @@ const isOptionOrder = (symbol) => {
  * @param {number} opts.exitPrice - The raw exit trigger/close price supplied by the caller
  * @param {string} opts.exitReason - One of: manual, stop_loss, target, expiry, square_off
  * @param {string} [opts.cameFrom] - Source: Open, Hold, Overnight, Holdings
+ * @param {Date|string} [opts.closedAt] - Logical close timestamp for exit_at/closed_at
  * @returns {{ ok: boolean, order?: Object, pnl?: Object, error?: string }}
  */
-export async function closeOrderAndSettle(orderId, { exitPrice, exitReason = 'manual', cameFrom = '' }) {
+export async function closeOrderAndSettle(orderId, { exitPrice, exitReason = 'manual', cameFrom = '', closedAt = null }) {
   try {
     const now = new Date();
+    const requestedClosedAt = closedAt ? new Date(closedAt) : null;
+    const effectiveClosedAt = requestedClosedAt && !Number.isNaN(requestedClosedAt.getTime())
+      ? requestedClosedAt
+      : now;
     const rawExitInput = toNumber(exitPrice);
 
     // 1. Atomic idempotent close — only one caller wins
@@ -84,8 +89,8 @@ export async function closeOrderAndSettle(orderId, { exitPrice, exitReason = 'ma
         $set: {
           status: 'CLOSED',
           order_status: 'CLOSED',
-          exit_at: now,
-          closed_at: now,
+          exit_at: effectiveClosedAt,
+          closed_at: effectiveClosedAt,
           exit_reason: exitReason,
           came_From: cameFrom || undefined,
         }
@@ -241,7 +246,7 @@ export async function closeOrderAndSettle(orderId, { exitPrice, exitReason = 'ma
     // 9. Save order with settlement status + P&L
     await order.save();
 
-    console.log(`[closeOrderAndSettle] Order ${orderId} closed. ${order.symbol} ${order.side} ${qty}qty | Raw Exit: ₹${round2(safeRawExitPrice)} Eff Exit: ₹${round2(effectiveExitPrice)} | Net P&L: ₹${round2(netPnl)} | Settlement: ${order.settlement_status}`);
+    console.log(`[closeOrderAndSettle] Order ${orderId} closed. ${order.symbol} ${order.side} ${qty}qty | ClosedAt: ${effectiveClosedAt.toISOString()} | Raw Exit: ₹${round2(safeRawExitPrice)} Eff Exit: ₹${round2(effectiveExitPrice)} | Net P&L: ₹${round2(netPnl)} | Settlement: ${order.settlement_status}`);
 
     return {
       ok: true,

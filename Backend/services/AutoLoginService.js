@@ -5,6 +5,8 @@
 import crypto from 'crypto';
 import { authenticator } from 'otplib';
 import KiteCredential from '../Model/KiteCredentialModel.js';
+import { getFeedInstance } from './feedState.js';
+import { publishCredentialsUpdated } from '../sockets/io.js';
 
 const BASE_URL = 'https://kite.zerodha.com';
 
@@ -323,8 +325,21 @@ export async function runAutoLogin() {
             console.log('[AutoLogin] ✅ Database updated with new token');
             console.log('[AutoLogin]    Token expires:', expiry.toISOString());
 
-            // Note: WebSocket reconnection is handled by KiteWebSocket itself
-            // It will auto-detect the new token on next connection attempt
+            // Trigger WebSocket reconnection with new credentials
+            const feedInstance = getFeedInstance();
+            if (feedInstance && typeof feedInstance.reconnectWithNewCredentials === 'function') {
+                console.log('[AutoLogin] 🔄 Triggering WebSocket reconnection with new token...');
+                // Don't await - let it reconnect asynchronously
+                feedInstance.reconnectWithNewCredentials().catch(err => {
+                    console.error('[AutoLogin] WebSocket reconnect failed:', err.message);
+                });
+            } else {
+                // Split mode: no local feed instance, notify worker via Redis
+                console.log('[AutoLogin] 🔄 No local feed instance — publishing credentials_updated to worker...');
+                publishCredentialsUpdated().catch(err => {
+                    console.error('[AutoLogin] Failed to notify worker:', err.message);
+                });
+            }
 
             return {
                 success: true,

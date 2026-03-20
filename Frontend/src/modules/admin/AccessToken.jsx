@@ -8,11 +8,13 @@ const AccessToken = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [manualLoginLoading, setManualLoginLoading] = useState(false);
+  const [wsReconnecting, setWsReconnecting] = useState(false);
   const [totpLoading, setTotpLoading] = useState(false);
   const [totpData, setTotpData] = useState(null);
   const [totpSecondsRemaining, setTotpSecondsRemaining] = useState(0);
   const [totpStatusMessage, setTotpStatusMessage] = useState(null);
   const [error, setError] = useState(null);
+  const [successMessage, setSuccessMessage] = useState(null);
 
   const fetchTokenStatus = useCallback(async () => {
     setLoading(true);
@@ -83,6 +85,27 @@ const AccessToken = () => {
       setError(err.message || 'Failed to get login URL');
     } finally {
       setManualLoginLoading(false);
+    }
+  };
+
+  const handleReconnectWebSocket = async () => {
+    setWsReconnecting(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const data = await adminApi.reconnectWebSocket();
+      if (data.success) {
+        setSuccessMessage(`WebSocket reconnected (${data.mode} mode)`);
+        // Clear success message after 5 seconds
+        setTimeout(() => setSuccessMessage(null), 5000);
+      } else {
+        setError(data.error || 'WebSocket reconnection failed');
+      }
+    } catch (err) {
+      console.error('[AccessToken] WebSocket reconnect error:', err);
+      setError(err.message || 'WebSocket reconnection failed');
+    } finally {
+      setWsReconnecting(false);
     }
   };
 
@@ -167,6 +190,14 @@ const AccessToken = () => {
         {error && (
           <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm">
             {error}
+          </div>
+        )}
+
+        {/* Success */}
+        {successMessage && (
+          <div className="p-3 bg-green-50 border border-green-200 rounded-xl text-green-600 text-sm flex items-center gap-2">
+            <span className="material-symbols-outlined text-[18px]">check_circle</span>
+            {successMessage}
           </div>
         )}
 
@@ -343,6 +374,24 @@ const AccessToken = () => {
                 >
                   <span className={`material-symbols-outlined text-[16px] ${manualLoginLoading ? 'animate-pulse' : ''}`}>open_in_new</span>
                   {manualLoginLoading ? 'Opening...' : 'Login via Kite'}
+                </button>
+              </div>
+            </div>
+
+            {/* Reconnect WebSocket */}
+            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-sm font-semibold text-[#111418]">Reconnect WebSocket</h3>
+                  <p className="text-[10px] sm:text-xs text-[#617589] mt-0.5">Force live feed to reload token from DB (no restart needed)</p>
+                </div>
+                <button
+                  onClick={handleReconnectWebSocket}
+                  disabled={wsReconnecting}
+                  className="flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 shrink-0"
+                >
+                  <span className={`material-symbols-outlined text-[16px] ${wsReconnecting ? 'animate-spin' : ''}`}>sync</span>
+                  {wsReconnecting ? 'Reconnecting...' : 'Reconnect'}
                 </button>
               </div>
             </div>

@@ -3,6 +3,7 @@
 // Fetches OHLC candle data using Kite's historical API
 
 import KiteCredential from '../Model/KiteCredentialModel.js';
+import { isMCX } from '../Utils/mcx/resolver.js';
 
 const BASE_URL = 'https://api.kite.trade';
 
@@ -26,16 +27,19 @@ const INTERVAL_MAP = {
 /**
  * Format date for Kite API (yyyy-mm-dd HH:MM:SS)
  */
-function formatDateForKite(date, isEndDate = false) {
+function formatDateForKite(date, { exchange, segment, isEndDate = false } = {}) {
     const d = date instanceof Date ? date : new Date(date);
 
     const year = d.getFullYear();
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
 
-    // For date-only inputs, add market times
+    // For date-only inputs, append session-aware market times.
     if (typeof date === 'string' && date.length === 10) {
-        const time = isEndDate ? '15:30:00' : '09:15:00';
+        const isMcx = isMCX({ exchange, segment });
+        const time = isEndDate
+            ? (isMcx ? '23:00:00' : '15:30:00')
+            : (isMcx ? '09:00:00' : '09:15:00');
         return `${year}-${month}-${day} ${time}`;
     }
 
@@ -70,6 +74,8 @@ async function getKiteCredentials() {
  * @param {string} params.interval - Time interval (1, 5, 15, 60, day, etc.)
  * @param {string|Date} params.from - Start date/datetime
  * @param {string|Date} params.to - End date/datetime
+ * @param {string} [params.exchange] - Instrument exchange for session-aware defaults
+ * @param {string} [params.segment] - Instrument segment for session-aware defaults
  * @param {boolean} params.oi - Include Open Interest (default: false)
  * @param {boolean} params.continuous - Continuous data for F&O (default: false)
  * @returns {Promise<Array>} Array of [timestamp, open, high, low, close, volume]
@@ -80,6 +86,8 @@ export async function getKiteHistoricalData(params) {
         interval = '5',
         from,
         to,
+        exchange,
+        segment,
         oi = false,
         continuous = false
     } = params;
@@ -105,8 +113,8 @@ export async function getKiteHistoricalData(params) {
         const { api_key, access_token } = await getKiteCredentials();
 
         // Format dates
-        const fromDate = formatDateForKite(from, false);
-        const toDate = formatDateForKite(to, true);
+        const fromDate = formatDateForKite(from, { exchange, segment, isEndDate: false });
+        const toDate = formatDateForKite(to, { exchange, segment, isEndDate: true });
 
         // Build URL
         const token = String(instrument_token);
@@ -156,7 +164,7 @@ export async function getKiteHistoricalData(params) {
         }
 
         // Transform Kite response to our format
-        // Kite: ["2024-12-01T09:15:00+0530", open, high, low, close, volume, oi?]
+        // Kite: ["2024-12-01T09:00:00+0530" | "2024-12-01T09:15:00+0530", open, high, low, close, volume, oi?]
         // Our format: [timestamp_ms, open, high, low, close, volume]
         const transformed = candles.map(candle => {
             const [timestamp, open, high, low, close, volume] = candle;

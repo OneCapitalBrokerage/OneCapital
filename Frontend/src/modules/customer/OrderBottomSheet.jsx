@@ -2,15 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import customerApi from '../../api/customer';
 import { isMcxSegment, getMcxSpec } from '../../utils/mcxSpecs';
+import { formatValidityTillLabel, getMarketCloseTimeParts } from '../../utils/marketStatus';
 import useCustomerTradingGate from '../../hooks/useCustomerTradingGate';
 
 const LIVE_TICK_MAX_AGE_MS = 3 * 1000;
 
 const computeValidity = (productType, expiry, { exchange, segment } = {}) => {
   const now = new Date();
-  const isMcx = isMcxSegment(exchange, segment);
-  const closeH = isMcx ? 23 : 15;
-  const closeM = isMcx ? 0 : 15;
+  const { hour: closeH, minute: closeM } = getMarketCloseTimeParts({ exchange, segment });
 
   if (productType === 'MIS') {
     const endOfDay = new Date(now);
@@ -559,14 +558,13 @@ const OrderBottomSheet = ({
                 <span className="material-symbols-outlined text-[14px]">schedule</span>
                 Valid till
               </span>
-              <span className="text-xs font-semibold text-gray-900 dark:text-[#e8f3ee]">
-                {(() => {
-                  const v = computeValidity(productType, instrumentExpiry, { exchange: stock?.exchange, segment: stock?.segment });
-                  const d = new Date(v.expiresAt);
-                  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + (isMcx ? ', 11:00 PM' : ', 3:15 PM');
-                })()}
-              </span>
-            </div>
+                <span className="text-xs font-semibold text-gray-900 dark:text-[#e8f3ee]">
+                  {(() => {
+                    const v = computeValidity(productType, instrumentExpiry, { exchange: stock?.exchange, segment: stock?.segment });
+                    return formatValidityTillLabel(v.expiresAt, { exchange: stock?.exchange, segment: stock?.segment });
+                  })()}
+                </span>
+              </div>
           )}
 
           {feedback && (

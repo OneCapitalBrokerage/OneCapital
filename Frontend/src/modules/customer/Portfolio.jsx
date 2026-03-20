@@ -9,6 +9,7 @@ import ExitOrderSheet from './ExitOrderSheet';
 import useCustomerTradingGate from '../../hooks/useCustomerTradingGate';
 import { useAuth } from '../../context/AuthContext';
 import { readSessionCache, writeSessionCache, clearSessionCache } from '../../utils/sessionCache';
+import { formatValidityTillLabel } from '../../utils/marketStatus';
 
 const PORTFOLIO_CACHE_KEY = 'portfolio_tab_v2';
 const PORTFOLIO_CACHE_TTL_MS = 30 * 1000;
@@ -790,8 +791,8 @@ const Portfolio = () => {
   }, [pnlFilteredHoldings, pnlFilteredPositions, livePrices]);
 
   const netPnlValueToneClass = summary.netPnL >= 0
-    ? 'text-emerald-300 drop-shadow-[0_1px_1px_rgba(0,0,0,0.2)]'
-    : 'text-red-500/90 drop-shadow-[0_1px_1px_rgba(0,0,0,0.2)]';
+    ? 'text-[#16a34a]'
+    : 'text-[#dc2626]';
 
   const displayData = activeTab === 'holdings' ? listHoldings : listPositions;
   const displayRows = useMemo(
@@ -1062,35 +1063,29 @@ const Portfolio = () => {
 
       {/* P&L Card */}
       <div className="px-3 sm:px-4 pt-3">
-        <div className="relative overflow-hidden rounded-xl border border-[#2f8eef] bg-gradient-to-br from-[#0f68d7] via-[#137fec] to-[#0b4eaf] p-4 sm:p-5 text-white shadow-[0_14px_32px_rgba(19,127,236,0.35)]">
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-white/25 to-transparent" />
-          <div className="relative">
-            <div className="flex justify-between items-start">
-              <p className="text-white/85 text-xs sm:text-sm font-medium leading-normal">
-                Net P&L ({selectedFilter === 'session' ? 'This Week' : 'Filtered'})
+        <div className="rounded-xl border border-gray-200 dark:border-[#22352d] bg-white dark:bg-[#111b17] p-4 sm:p-5 shadow-sm">
+          <p className="text-[#617589] dark:text-[#9cb7aa] text-xs sm:text-sm font-medium leading-normal">
+            Net P&L ({selectedFilter === 'session' ? 'This Week' : 'Filtered'})
+          </p>
+          {loading ? (
+            <div className="animate-pulse mt-2">
+              <div className="h-7 sm:h-8 bg-gray-200 dark:bg-[#22352d] rounded w-36 sm:w-40 mb-2"></div>
+              <div className="h-4 bg-gray-200 dark:bg-[#22352d] rounded w-28 sm:w-32"></div>
+            </div>
+          ) : (
+            <>
+              <h1 className={`mt-1 text-[26px] sm:text-[32px] font-bold leading-tight tracking-tight ${netPnlValueToneClass}`}>
+                {formatSignedCurrency(summary.netPnL)}
+              </h1>
+              <p className={`text-xs sm:text-sm font-semibold mt-0.5 ${netPnlValueToneClass}`}>
+                {formatSignedPercent(summary.netPnLPercent)}
               </p>
-              <span className="material-symbols-outlined text-white/75 text-[18px] sm:text-[20px]">insights</span>
-            </div>
-            {loading ? (
-              <div className="animate-pulse mt-2">
-                <div className="h-7 sm:h-8 bg-white/30 rounded w-36 sm:w-40 mb-2"></div>
-                <div className="h-4 bg-white/25 rounded w-28 sm:w-32"></div>
-              </div>
-            ) : (
-              <>
-                <h1 className={`mt-1 text-[26px] sm:text-[32px] font-bold leading-tight tracking-tight ${netPnlValueToneClass}`}>
-                  {formatSignedCurrency(summary.netPnL)}
-                </h1>
-                <p className={`text-xs sm:text-sm font-semibold mt-0.5 ${netPnlValueToneClass}`}>
-                  {formatSignedPercent(summary.netPnLPercent)}
-                </p>
-              </>
-            )}
+            </>
+          )}
 
-            <div className="mt-3 rounded-lg border border-white/25 bg-white/12 p-2.5 backdrop-blur-[2px]">
-              <p className="text-white/80 text-[10px] sm:text-[11px] uppercase tracking-[0.04em]">Total Value (Filtered)</p>
-              <p className="text-white text-sm sm:text-base font-semibold mt-1">{formatCurrency(summary.totalValue)}</p>
-            </div>
+          <div className="mt-3 rounded-lg border border-gray-100 dark:border-[#22352d] bg-[#f6f7f8] dark:bg-[#0b120f] p-2.5">
+            <p className="text-[#617589] dark:text-[#9cb7aa] text-[10px] sm:text-[11px] uppercase tracking-[0.04em]">Total Value (Filtered)</p>
+            <p className="text-[#111418] dark:text-[#e8f3ee] text-sm sm:text-base font-semibold mt-1">{formatCurrency(summary.totalValue)}</p>
           </div>
         </div>
       </div>
@@ -1259,7 +1254,7 @@ const Portfolio = () => {
                 {activeTab === 'holdings' && item.validity_expires_at && item.validity_mode !== 'INTRADAY_DAY' && (
                   <div className="px-3 pb-1 flex items-center gap-1.5 text-[10px] sm:text-xs text-[#617589] dark:text-[#9cb7aa]">
                     <span className="material-symbols-outlined text-[14px]">schedule</span>
-                    <span>Valid till {new Date(item.validity_expires_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}, 3:15 PM</span>
+                    <span>Valid till {formatValidityTillLabel(item.validity_expires_at, { exchange: item.exchange, segment: item.segment })}</span>
                     {item.validity_extended_count > 0 && (
                       <span className="text-[9px] text-[#617589]">(+{item.validity_extended_count}x extended)</span>
                     )}
