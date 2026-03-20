@@ -29,7 +29,8 @@ import {
   getStandardMarketStatus,
   getMarketStatusForInstrument,
 } from '../../Utils/tradingSession.js';
-import { releaseMarginOnClose, getMarginBucket } from '../../services/marginLifecycle.js';
+import { releaseMarginOnClose, getMarginBucket, reserveMargin } from '../../services/marginLifecycle.js';
+import { rollbackOptionUsage } from '../../Utils/OptionLimitManager.js';
 import { canBrokerExtendValidity, resolveOrderValidity } from '../../services/orderValidity.js';
 import { syncGlobalWatchlistTokens } from '../../sockets/io.js';
 import { normalizeMcxOrder } from '../../Utils/mcx/normalizer.js';
@@ -334,15 +335,18 @@ const placeOrder = asyncHandler(async (req, res) => {
   let availableMargin;
   if (marginBucket === 'commodity_delivery') {
     availableMargin = toNumber(fund.commodity_delivery?.available_limit) - toNumber(fund.commodity_delivery?.used_limit);
+  } else if (marginBucket === 'commodity_intraday') {
+    availableMargin = toNumber(fund.commodity_intraday?.available_limit) - toNumber(fund.commodity_intraday?.used_limit);
   } else if (marginBucket === 'delivery') {
     availableMargin = toNumber(fund.overnight?.available_limit);
   } else {
+    // 'intraday' bucket (equity MIS)
     availableMargin = toNumber(fund.intraday?.available_limit) - toNumber(fund.intraday?.used_limit);
   }
   if (sideNorm === 'BUY' && availableMargin < marginRequired) {
     return failPlacement({
       status: 400,
-      message: marginBucket === 'commodity_delivery'
+      message: marginBucket === 'commodity_delivery' || marginBucket === 'commodity_intraday'
         ? 'Insufficient Commodity Margin.'
         : 'Insufficient margin.',
       code: 'INSUFFICIENT_FUNDS',
@@ -418,9 +422,18 @@ const placeOrder = asyncHandler(async (req, res) => {
       validity_expires_at: validityInfo.expiresAt,
     });
 
-    // Block margin
+    // Block margin using the correct bucket (intraday, commodity_intraday, etc.)
     if (!requiresApproval) {
-      fund.intraday.used_limit = (fund.intraday.used_limit || 0) + marginRequired;
+      const reserveResult = reserveMargin(fund, marginBucket, marginRequired);
+      if (!reserveResult.ok) {
+        // Rollback: delete the order that was just created
+        await OrderModel.deleteOne({ _id: order._id });
+        return failPlacement({
+          status: 400,
+          message: reserveResult.error || 'Insufficient margin.',
+          code: 'INSUFFICIENT_FUNDS',
+        });
+      }
       await fund.save();
     }
   } catch (error) {
@@ -870,10 +883,23 @@ const cancelOrder = asyncHandler(async (req, res) => {
     });
 
     if (fund) {
-      releaseMarginOnClose(fund, order, {
-        reason: 'customer_cancel',
-        orderId: String(order._id),
-      });
+      // Detect if this is an option order
+      const sym = String(order.symbol || '').toUpperCase();
+      const isOption = sym.endsWith('CE') || sym.endsWith('PE') || sym.endsWith('CALL') || sym.endsWith('PUT');
+      
+      if (isOption) {
+        // Options use rollbackOptionUsage (includes MCX commodity options)
+        rollbackOptionUsage(fund, order.product, toNumber(order.margin_blocked), {
+          exchange: order.exchange,
+          segment: order.segment,
+        });
+      } else {
+        // Non-option orders use releaseMarginOnClose
+        releaseMarginOnClose(fund, order, {
+          reason: 'customer_cancel',
+          orderId: String(order._id),
+        });
+      }
       order.margin_released_at = new Date();
       await fund.save();
     }

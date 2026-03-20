@@ -892,11 +892,24 @@ const updateOrder = asyncHandler(async (req, res) => {
              !existing.margin_released_at &&
              toNumber(existing.margin_blocked) > 0) {
       if (!existing.margin_released_at) {
-        releaseMarginOnClose(fund, existing, {
-          reason: (update.order_status || '').toLowerCase(),
-          orderId: String(existing._id),
-          bucketOverride: existing.meta?.margin_hold?.bucket,
-        });
+        // Detect if this is an option order
+        const exSymUpper = String(existing.symbol || '').toUpperCase();
+        const isOptionCancel = exSymUpper.endsWith('CE') || exSymUpper.endsWith('PE') || exSymUpper.endsWith('CALL') || exSymUpper.endsWith('PUT');
+        
+        if (isOptionCancel) {
+          // Options use rollbackOptionUsage (includes MCX commodity options)
+          rollbackOptionUsage(fund, effectiveProduct, toNumber(existing.margin_blocked), {
+            exchange: existing.exchange,
+            segment: existing.segment,
+          });
+        } else {
+          // Non-option orders use releaseMarginOnClose
+          releaseMarginOnClose(fund, existing, {
+            reason: (update.order_status || '').toLowerCase(),
+            orderId: String(existing._id),
+            bucketOverride: existing.meta?.margin_hold?.bucket,
+          });
+        }
         update.margin_blocked = 0;
         update.margin_released_at = new Date();
       }
