@@ -23,6 +23,45 @@ const AddFundsConfirm = () => {
   const [loading, setLoading] = useState(!initialState.paymentInfo);
   const [paymentInfo, setPaymentInfo] = useState(initialState.paymentInfo || null);
   const [error, setError] = useState('');
+  const [copiedField, setCopiedField] = useState('');
+
+  const handleCopy = async (value, fieldName) => {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedField(fieldName);
+      setTimeout(() => setCopiedField(''), 1500);
+    } catch {
+      // Fallback for older browsers
+      const textArea = document.createElement('textarea');
+      textArea.value = value;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+      setCopiedField(fieldName);
+      setTimeout(() => setCopiedField(''), 1500);
+    }
+  };
+
+  const handleDownloadQr = async () => {
+    if (!paymentInfo?.qrPhotoUrl) return;
+    try {
+      const response = await fetch(paymentInfo.qrPhotoUrl);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'broker-upi-qr.png';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch {
+      // Fallback: open in new tab
+      window.open(paymentInfo.qrPhotoUrl, '_blank');
+    }
+  };
 
   const request = initialState.request || {};
   const amount = initialState.amount || request.amount || 0;
@@ -56,9 +95,9 @@ const AddFundsConfirm = () => {
         <div className="flex justify-end">
           <button
             onClick={() => navigate('/funds')}
-            className="inline-flex items-center gap-1 text-[#617589] dark:text-[#9cb7aa] text-xs font-semibold"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[#617589] dark:text-[#9cb7aa] text-sm font-semibold hover:bg-gray-100 dark:hover:bg-[#16231d] transition-colors"
           >
-            <span className="material-symbols-outlined text-[16px]">close</span>
+            <span className="material-symbols-outlined text-[18px]">close</span>
             Close
           </button>
         </div>
@@ -78,7 +117,7 @@ const AddFundsConfirm = () => {
         <div className="bg-white dark:bg-[#111b17] rounded-xl border border-gray-200 dark:border-[#22352d] p-4 shadow-sm">
           <div className="flex items-center justify-between gap-3 mb-2">
             <p className="text-[#111418] dark:text-[#e8f3ee] text-sm font-bold">Broker Payment Instructions</p>
-            <span className="rounded-full bg-[#eaf4ff] px-2.5 py-1 text-[10px] font-semibold text-[#137fec]">
+            <span className="rounded-full bg-[#eaf4ff] dark:bg-[#137fec]/15 px-2.5 py-1 text-[10px] font-semibold text-[#137fec] dark:text-[#8cc1ff]">
               {PAYMENT_METHOD_LABELS[selectedMethod] || 'UPI'}
             </span>
           </div>
@@ -97,7 +136,7 @@ const AddFundsConfirm = () => {
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-sm font-semibold text-[#111418] dark:text-[#e8f3ee]">UPI</p>
                     {selectedMethod === 'upi' && (
-                      <span className="rounded-full bg-[#137fec]/10 px-2.5 py-1 text-[10px] font-semibold text-[#137fec]">
+                      <span className="rounded-full bg-[#137fec]/10 dark:bg-[#137fec]/20 px-2.5 py-1 text-[10px] font-semibold text-[#137fec] dark:text-[#8cc1ff]">
                         Selected
                       </span>
                     )}
@@ -110,6 +149,13 @@ const AddFundsConfirm = () => {
                         alt="Broker UPI QR"
                         className="w-full rounded-lg"
                       />
+                      <button
+                        onClick={handleDownloadQr}
+                        className="mt-3 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-gray-200 dark:border-[#22352d] bg-[#fafafa] dark:bg-[#0b120f] text-sm font-semibold text-[#111418] dark:text-[#e8f3ee] hover:bg-gray-100 dark:hover:bg-[#16231d] transition-colors"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">download</span>
+                        Download QR
+                      </button>
                     </div>
                   ) : (
                     <div className="mt-3 rounded-lg border border-dashed border-gray-300 dark:border-[#22352d] bg-white dark:bg-[#111b17] px-4 py-5 text-center">
@@ -127,7 +173,7 @@ const AddFundsConfirm = () => {
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-sm font-semibold text-[#111418] dark:text-[#e8f3ee]">Bank Transfer</p>
                     {selectedMethod === 'bank_transfer' && (
-                      <span className="rounded-full bg-[#137fec]/10 px-2.5 py-1 text-[10px] font-semibold text-[#137fec]">
+                      <span className="rounded-full bg-[#137fec]/10 dark:bg-[#137fec]/20 px-2.5 py-1 text-[10px] font-semibold text-[#137fec] dark:text-[#8cc1ff]">
                         Selected
                       </span>
                     )}
@@ -135,15 +181,35 @@ const AddFundsConfirm = () => {
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
                     <div className="rounded-lg border border-gray-200 dark:border-[#22352d] bg-white dark:bg-[#111b17] px-3 py-2.5">
                       <p className="text-[11px] text-[#617589] dark:text-[#9cb7aa] mb-1">Account Number</p>
-                      <p className="text-sm font-semibold font-mono text-[#111418] dark:text-[#e8f3ee] break-all">
-                        {paymentInfo?.bankTransferDetails?.accountNumber}
-                      </p>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-semibold font-mono text-[#111418] dark:text-[#e8f3ee] break-all">
+                          {paymentInfo?.bankTransferDetails?.accountNumber}
+                        </p>
+                        <button
+                          onClick={() => handleCopy(paymentInfo?.bankTransferDetails?.accountNumber, 'account')}
+                          className="shrink-0 p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-[#16231d] text-[#617589] dark:text-[#9cb7aa] transition-colors"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">
+                            {copiedField === 'account' ? 'check' : 'content_copy'}
+                          </span>
+                        </button>
+                      </div>
                     </div>
                     <div className="rounded-lg border border-gray-200 dark:border-[#22352d] bg-white dark:bg-[#111b17] px-3 py-2.5">
                       <p className="text-[11px] text-[#617589] dark:text-[#9cb7aa] mb-1">IFSC Code</p>
-                      <p className="text-sm font-semibold font-mono text-[#111418] dark:text-[#e8f3ee]">
-                        {paymentInfo?.bankTransferDetails?.ifscCode}
-                      </p>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-semibold font-mono text-[#111418] dark:text-[#e8f3ee]">
+                          {paymentInfo?.bankTransferDetails?.ifscCode}
+                        </p>
+                        <button
+                          onClick={() => handleCopy(paymentInfo?.bankTransferDetails?.ifscCode, 'ifsc')}
+                          className="shrink-0 p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-[#16231d] text-[#617589] dark:text-[#9cb7aa] transition-colors"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">
+                            {copiedField === 'ifsc' ? 'check' : 'content_copy'}
+                          </span>
+                        </button>
+                      </div>
                     </div>
                     {(paymentInfo?.bankTransferDetails?.bankName || paymentInfo?.bankTransferDetails?.accountHolderName) && (
                       <div className="rounded-lg border border-gray-200 dark:border-[#22352d] bg-white dark:bg-[#111b17] px-3 py-2.5 sm:col-span-2">

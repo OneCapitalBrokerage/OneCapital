@@ -55,6 +55,45 @@ const Payments = () => {
   const [withdrawalRequests, setWithdrawalRequests] = useState([]);
   const [paymentInfo, setPaymentInfo] = useState(null);
   const [showQr, setShowQr] = useState(false);
+  const [copiedField, setCopiedField] = useState('');
+
+  const handleCopy = async (value, fieldName) => {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedField(fieldName);
+      setTimeout(() => setCopiedField(''), 1500);
+    } catch {
+      // Fallback for older browsers
+      const textArea = document.createElement('textarea');
+      textArea.value = value;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+      setCopiedField(fieldName);
+      setTimeout(() => setCopiedField(''), 1500);
+    }
+  };
+
+  const handleDownloadQr = async () => {
+    if (!paymentInfo?.qrPhotoUrl) return;
+    try {
+      const response = await fetch(paymentInfo.qrPhotoUrl);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'broker-upi-qr.png';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch {
+      // Fallback: open in new tab
+      window.open(paymentInfo.qrPhotoUrl, '_blank');
+    }
+  };
 
   const fetchRecords = async () => {
     setLoading(true);
@@ -115,10 +154,30 @@ const Payments = () => {
             ))}
           </div>
           {bankTransferReady && (
-            <div className="mt-3 rounded-xl border border-gray-200 dark:border-[#22352d] bg-[#fafafa] dark:bg-[#0b120f] px-3 py-3 text-[11px] text-[#617589] dark:text-[#9cb7aa] space-y-1">
+            <div className="mt-3 rounded-xl border border-gray-200 dark:border-[#22352d] bg-[#fafafa] dark:bg-[#0b120f] px-3 py-3 text-[11px] text-[#617589] dark:text-[#9cb7aa] space-y-2">
               <p className="font-semibold text-[#111418] dark:text-[#e8f3ee]">Broker Bank Transfer</p>
-              <p className="font-mono break-all">{paymentInfo?.bankTransferDetails?.accountNumber}</p>
-              <p className="font-mono">{paymentInfo?.bankTransferDetails?.ifscCode}</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-mono break-all">{paymentInfo?.bankTransferDetails?.accountNumber}</p>
+                <button
+                  onClick={() => handleCopy(paymentInfo?.bankTransferDetails?.accountNumber, 'account')}
+                  className="shrink-0 p-1 rounded-lg hover:bg-gray-200 dark:hover:bg-[#16231d] text-[#617589] dark:text-[#9cb7aa] transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[16px]">
+                    {copiedField === 'account' ? 'check' : 'content_copy'}
+                  </span>
+                </button>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-mono">{paymentInfo?.bankTransferDetails?.ifscCode}</p>
+                <button
+                  onClick={() => handleCopy(paymentInfo?.bankTransferDetails?.ifscCode, 'ifsc')}
+                  className="shrink-0 p-1 rounded-lg hover:bg-gray-200 dark:hover:bg-[#16231d] text-[#617589] dark:text-[#9cb7aa] transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[16px]">
+                    {copiedField === 'ifsc' ? 'check' : 'content_copy'}
+                  </span>
+                </button>
+              </div>
               {paymentInfo?.bankTransferDetails?.bankName && <p>{paymentInfo.bankTransferDetails.bankName}</p>}
             </div>
           )}
@@ -270,6 +329,13 @@ const Payments = () => {
                   alt="Broker UPI QR"
                   className="w-full rounded-lg"
                 />
+                <button
+                  onClick={handleDownloadQr}
+                  className="mt-3 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-gray-200 dark:border-[#22352d] bg-white dark:bg-[#0b120f] text-sm font-semibold text-[#111418] dark:text-[#e8f3ee] hover:bg-gray-50 dark:hover:bg-[#16231d] transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[18px]">download</span>
+                  Download QR
+                </button>
               </div>
             ) : (
               <p className="text-sm text-[#617589] dark:text-[#9cb7aa]">
