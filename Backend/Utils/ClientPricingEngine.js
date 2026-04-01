@@ -270,6 +270,10 @@ export const applySpreadToPrice = ({ rawPrice, side, spread, spreadMode }) => {
   const appliedSpread = normalizedSide === 'BUY' ? resolvedSpread : -resolvedSpread;
   const effectivePrice = round2(safeRaw + appliedSpread);
 
+  if (effectivePrice <= 0) {
+    throw new Error(`Spread produced non-positive price: raw=${safeRaw}, spread=${appliedSpread}, effective=${effectivePrice}`);
+  }
+
   return {
     rawPrice: round2(safeRaw),
     effectivePrice,

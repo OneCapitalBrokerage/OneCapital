@@ -36,6 +36,7 @@ import { syncGlobalWatchlistTokens } from '../../sockets/io.js';
 import { normalizeMcxOrder } from '../../Utils/mcx/normalizer.js';
 import { isMCX } from '../../Utils/mcx/resolver.js';
 import { applyGlitchOverlay } from '../../services/glitchOverlay.js';
+import { getCachedLtp } from '../../services/livePriceCache.js';
 
 const toNumber = (value, fallback = 0) => {
   const n = Number(value);
@@ -161,7 +162,7 @@ const placeOrder = asyncHandler(async (req, res) => {
   const productNorm = normalizeProduct(product);
   const orderTypeNorm = String(orderType || 'LIMIT').toUpperCase();
   const qtyNum = toNumber(quantity);
-  const rawEntryPrice = toNumber(price);
+  const frontendSubmittedPrice = toNumber(price);
   const triggerPriceNum = toNumber(triggerPrice, 0);
   const stopLossNum = toNumber(stopLoss, 0);
   const targetNum = toNumber(target, 0);
@@ -188,11 +189,24 @@ const placeOrder = asyncHandler(async (req, res) => {
     });
   }
 
-  if (qtyNum <= 0 || rawEntryPrice <= 0) {
+  if (qtyNum <= 0 || frontendSubmittedPrice <= 0) {
     return failPlacement({
       status: 400,
       message: 'quantity and price must be positive numbers.',
       code: 'VALIDATION_ERROR',
+    });
+  }
+
+  // Override frontend price with server-side live LTP from feed cache
+  const { ltp: feedLtp } = getCachedLtp(String(instrumentToken));
+  let rawEntryPrice;
+  if (feedLtp > 0) {
+    rawEntryPrice = feedLtp;
+  } else {
+    return failPlacement({
+      status: 400,
+      message: 'Live price unavailable. Please try again.',
+      code: 'LIVE_PRICE_UNAVAILABLE',
     });
   }
 
@@ -388,6 +402,7 @@ const placeOrder = asyncHandler(async (req, res) => {
       raw_entry_price: entryPricing.rawPrice,
       effective_entry_price: effectiveEntryPrice,
       entry_spread_applied: entryPricing.appliedSpread,
+      frontend_submitted_price: frontendSubmittedPrice,
       order_type: orderTypeNorm,
       product: productNorm,
       exchange: resolvedExchange,

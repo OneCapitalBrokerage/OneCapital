@@ -33,9 +33,10 @@ const computeValidity = (productType, expiry, { exchange, segment } = {}) => {
   return { type: 'EQUITY_7D', expiresAt: equity7d.toISOString() };
 };
 
-const extractValidPrice = (data, isBuy = true) => {
+const extractValidPrice = (data, isBuy = true, strict = false) => {
   if (!data) return null;
   if (data.ltp != null && data.ltp > 0) return data.ltp;
+  if (strict) return null;
   if (isBuy && data.bestAskPrice != null && data.bestAskPrice > 0) return data.bestAskPrice;
   if (!isBuy && data.bestBidPrice != null && data.bestBidPrice > 0) return data.bestBidPrice;
   if (isBuy && data.bestBidPrice != null && data.bestBidPrice > 0) return data.bestBidPrice;
@@ -110,7 +111,7 @@ const OrderBottomSheet = ({
       latestTickRef.current = tick;
 
       if (tick) {
-        const nextPrice = extractValidPrice(tick, isBuy);
+        const nextPrice = extractValidPrice(tick, isBuy, orderTypeOverride === 'OPTION_CHAIN');
         const close = tick.close ?? tick.prev_close ?? null;
         const nextChange =
           nextPrice != null && close != null
@@ -143,7 +144,7 @@ const OrderBottomSheet = ({
 
     animationFrameId = requestAnimationFrame(updateLoop);
     return () => cancelAnimationFrame(animationFrameId);
-  }, [isOpen, instrumentToken, isBuy, ticksRef]);
+  }, [isOpen, instrumentToken, isBuy, ticksRef, orderTypeOverride]);
 
   const livePrice = useMemo(() => {
     return liveMeta.price ?? ltpData?.ltp ?? null;
@@ -296,9 +297,10 @@ const OrderBottomSheet = ({
       (updatedAt > 0 && tickAgeMs <= LIVE_TICK_MAX_AGE_MS)
     );
     const freshTick = hasFreshTick ? freshTickRaw : null;
+    const isStrictLtp = orderTypeOverride === 'OPTION_CHAIN';
     const freshPrice =
-      extractValidPrice(freshTick, isBuy) ??
-      (hasFreshTick ? extractValidPrice(latestTickRef.current, isBuy) : null);
+      extractValidPrice(freshTick, isBuy, isStrictLtp) ??
+      (hasFreshTick ? extractValidPrice(latestTickRef.current, isBuy, isStrictLtp) : null);
 
     let orderPrice = Number(priceInput);
     const isMarketLike = orderType === 'MARKET' || orderType === 'OPTION_CHAIN';

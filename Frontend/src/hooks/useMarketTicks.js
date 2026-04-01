@@ -201,6 +201,10 @@ export const useMarketTicks = (url, opts = {}) => {
 
     const onMarketUpdate = (update) => {
       if (!update || update.instrument_token == null) return;
+      // Strip invalid LTP — preserve previously cached good LTP via shallow merge
+      if (update.ltp !== undefined && !(update.ltp > 0)) {
+        delete update.ltp;
+      }
       const clientReceiveTs = Date.now();
       const key = String(update.instrument_token);
       const existing = ticksRef.current.get(key) || {};

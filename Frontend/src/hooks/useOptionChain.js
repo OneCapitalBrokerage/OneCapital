@@ -6,13 +6,8 @@ const SUBSCRIBED_STRIKE_COUNT = 13;
 
 const getTickLtp = (tick) => {
   if (!tick) return null;
-  return (
-    tick.ltp ??
-    tick.last_price ??
-    tick.lastPrice ??
-    tick.close ??
-    null
-  );
+  const ltp = tick.ltp ?? tick.last_price ?? tick.lastPrice ?? null;
+  return (ltp != null && ltp > 0) ? ltp : null;
 };
 
 const getTickOi = (tick) => {
@@ -25,14 +20,8 @@ const getTickVolume = (tick) => {
   return tick.volume ?? tick.volume_traded ?? tick.volumeTraded ?? null;
 };
 
-const normalizeSnapshot = (raw) => {
-  if (!raw || typeof raw !== 'object') return null;
-  return {
-    ltp: getTickLtp(raw),
-    oi: getTickOi(raw),
-    volume: getTickVolume(raw),
-  };
-};
+
+
 
 const toFiniteNumber = (value) => {
   const num = Number(value);
@@ -146,12 +135,10 @@ export const useOptionChain = ({
 
   const [liveByToken, setLiveByToken] = useState({});
 
-  // ticksReady: false until first live tick batch arrives for this chain.
-  // Resets to false on every new fetch so the table never shows stale 0 prices.
-  // Falls back to true after 5 seconds in case market is closed / no ticks come.
+  // ticksReady: false until first live tick batch with valid option LTP arrives.
+  // Resets to false on every new fetch so the table never shows stale prices.
   const [ticksReady, setTicksReady] = useState(false);
   const ticksReadyRef = useRef(false);
-  const ticksReadyTimeoutRef = useRef(null);
 
   const tokenMapRef = useRef(new Map());
   const subscribedRef = useRef([]);
@@ -161,60 +148,6 @@ export const useOptionChain = ({
   const chainRef = useRef([]);
   const spotInfoRef = useRef(null);
   const subscriptionSignatureRef = useRef('');
-
-  const seedFromSnapshot = useCallback(async (list) => {
-    if (!Array.isArray(list) || list.length === 0) return;
-
-    try {
-      const response = await api.post('/quotes/snapshot', { items: list });
-      const snapshot = response?.data;
-      if (!snapshot || typeof snapshot !== 'object') return;
-
-      const prev = prevLiveByTokenRef.current;
-      const next = { ...prev };
-      let hasChanges = false;
-      let optionDataReady = false;
-
-      tokenMapRef.current.forEach((_, token) => {
-        const normalized = normalizeSnapshot(snapshot[token]);
-        if (!normalized) return;
-        const { ltp, oi, volume } = normalized;
-        if (ltp == null && oi == null && volume == null) return;
-
-        const existing = prev[token];
-        if (
-          existing?.ltp !== ltp ||
-          existing?.oi !== oi ||
-          existing?.volume !== volume
-        ) {
-          next[token] = { ltp, oi, volume };
-          hasChanges = true;
-        }
-        optionDataReady = true;
-      });
-
-      if (hasChanges) {
-        prevLiveByTokenRef.current = next;
-        setLiveByToken(next);
-      }
-
-      const spotToken = spotTokenRef.current;
-      if (spotToken) {
-        const normalizedSpot = normalizeSnapshot(snapshot[spotToken]);
-        if (normalizedSpot?.ltp != null) {
-          setSpotPrice((prevPrice) => (prevPrice === normalizedSpot.ltp ? prevPrice : normalizedSpot.ltp));
-        }
-      }
-
-      if (optionDataReady && !ticksReadyRef.current) {
-        ticksReadyRef.current = true;
-        if (ticksReadyTimeoutRef.current) clearTimeout(ticksReadyTimeoutRef.current);
-        setTicksReady(true);
-      }
-    } catch {
-      // Snapshot seed is best-effort; live ticks will still update normally.
-    }
-  }, []);
 
   const unsubscribeFromOptions = useCallback(() => {
     if (subscribedRef.current.length) {
@@ -286,10 +219,9 @@ export const useOptionChain = ({
     setLoading(true);
     setError(null);
 
-    // Reset ticks-ready on every new fetch — never show 0-price table
+    // Reset ticks-ready on every new fetch — never show stale prices
     setTicksReady(false);
     ticksReadyRef.current = false;
-    if (ticksReadyTimeoutRef.current) clearTimeout(ticksReadyTimeoutRef.current);
 
     try {
       const response = await api.get('/option-chain', { params });
@@ -315,18 +247,7 @@ export const useOptionChain = ({
 
       unsubscribeFromOptions();
       if (chain.length) {
-        const newlySubscribed = syncWindowSubscription(chain, nextSpotInfo, initialLtp);
-        if (newlySubscribed.length) {
-          seedFromSnapshot(newlySubscribed);
-        }
-        // 5-second fallback: if no ticks arrive (market closed, weekend),
-        // show the table anyway rather than blocking the user forever.
-        ticksReadyTimeoutRef.current = setTimeout(() => {
-          if (!ticksReadyRef.current) {
-            ticksReadyRef.current = true;
-            setTicksReady(true);
-          }
-        }, 5000);
+        syncWindowSubscription(chain, nextSpotInfo, initialLtp);
       } else {
         // Empty chain — nothing to wait for
         subscriptionSignatureRef.current = '';
@@ -343,7 +264,7 @@ export const useOptionChain = ({
     } finally {
       setLoading(false);
     }
-  }, [name, segment, expiry, tradingsymbol, instrumentToken, syncWindowSubscription, unsubscribeFromOptions, initialLtp, seedFromSnapshot]);
+  }, [name, segment, expiry, tradingsymbol, instrumentToken, syncWindowSubscription, unsubscribeFromOptions, initialLtp]);
 
   const fetchExpiries = useCallback(async () => {
     if (!name && !tradingsymbol && !instrumentToken) return;
@@ -367,17 +288,13 @@ export const useOptionChain = ({
     fetchExpiries();
     return () => {
       unsubscribeFromOptions();
-      if (ticksReadyTimeoutRef.current) clearTimeout(ticksReadyTimeoutRef.current);
     };
   }, [name, segment, expiry, tradingsymbol, instrumentToken, fetchOptionChain, fetchExpiries, unsubscribeFromOptions]);
 
   useEffect(() => {
     if (!chainRef.current.length) return;
-    const newlySubscribed = syncWindowSubscription(chainRef.current, spotInfoRef.current, spotPrice);
-    if (newlySubscribed.length) {
-      seedFromSnapshot(newlySubscribed);
-    }
-  }, [spotPrice, syncWindowSubscription, seedFromSnapshot]);
+    syncWindowSubscription(chainRef.current, spotInfoRef.current, spotPrice);
+  }, [spotPrice, syncWindowSubscription]);
 
   // Keep liveByToken in sync with ticks via RAF loop.
   // This replaces the chain-array-mutation approach: we update a flat token→values
@@ -436,11 +353,15 @@ export const useOptionChain = ({
         setLiveByToken(next);
         lastUpdate = timestamp;
 
-        // First tick batch arrived — mark live prices as ready
+        // Mark ready only when at least one option token has a valid live LTP
         if (!ticksReadyRef.current) {
-          ticksReadyRef.current = true;
-          if (ticksReadyTimeoutRef.current) clearTimeout(ticksReadyTimeoutRef.current);
-          setTicksReady(true);
+          const hasValidOptionLtp = Object.entries(next).some(
+            ([tok, data]) => tokenMapRef.current.has(tok) && data.ltp > 0
+          );
+          if (hasValidOptionLtp) {
+            ticksReadyRef.current = true;
+            setTicksReady(true);
+          }
         }
       }
 

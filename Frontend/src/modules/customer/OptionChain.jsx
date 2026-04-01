@@ -526,10 +526,10 @@ const OptionChain = () => {
               const callLive = callToken ? liveByToken[callToken] : null;
               const putLive = putToken ? liveByToken[putToken] : null;
 
-              const callLtp = callLive?.ltp ?? row.call?.ltp;
+              const callLtp = callLive?.ltp ?? null;
               const callOi = callLive?.oi ?? row.call?.oi;
               const callVolume = callLive?.volume ?? row.call?.volume;
-              const putLtp = putLive?.ltp ?? row.put?.ltp;
+              const putLtp = putLive?.ltp ?? null;
               const putOi = putLive?.oi ?? row.put?.oi;
               const putVolume = putLive?.volume ?? row.put?.volume;
 
@@ -589,7 +589,7 @@ const OptionChain = () => {
           <span className="text-xs font-bold text-[#111418] dark:text-[#e8f3ee] tabular-nums shrink-0">
             {(() => {
               const live = selectedOptionToken ? liveByToken[selectedOptionToken] : null;
-              const ltp = live?.ltp ?? selectedOption?.ltp;
+              const ltp = live?.ltp ?? null;
               return `LTP ${ltp != null ? `₹${Number(ltp).toFixed(2)}` : '—'}`;
             })()}
           </span>
@@ -599,7 +599,7 @@ const OptionChain = () => {
             <button
               type="button"
               onClick={() => openOrderSheet('BUY')}
-              disabled={!selectedOption}
+              disabled={!selectedOption || !(selectedOptionToken && liveByToken[selectedOptionToken]?.ltp > 0)}
               className="flex items-center justify-center h-12 rounded-lg bg-[#137fec] hover:bg-blue-600 text-white font-bold text-base transition-colors shadow-sm disabled:opacity-50"
             >
               BUY
@@ -625,7 +625,7 @@ const OptionChain = () => {
         isOpen={orderSheet.open}
         side={orderSheet.side}
         stock={orderStock}
-        ltpData={{ ltp: (selectedOptionToken ? liveByToken[selectedOptionToken]?.ltp : null) ?? selectedOption?.ltp ?? null, change: 0, changePercent: 0 }}
+        ltpData={{ ltp: (selectedOptionToken ? liveByToken[selectedOptionToken]?.ltp : null) ?? null, change: 0, changePercent: 0 }}
         ticksRef={ticksRef}
         tickUpdatedAtRef={tickUpdatedAtRef}
         orderTypeOverride="OPTION_CHAIN"

@@ -30,6 +30,7 @@ const OrderSchema = new mongoose.Schema({
   raw_entry_price: { type: Number, default: 0 },
   effective_entry_price: { type: Number, default: 0 },
   entry_spread_applied: { type: Number, default: 0 },
+  frontend_submitted_price: { type: Number, default: 0 },
   trigger_price: { type: Number, default: 0 }, // Stop-loss trigger
   stop_loss: { type: Number, default: 0 },
   target: { type: Number, default: 0 },

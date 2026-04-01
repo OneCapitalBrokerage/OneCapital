@@ -456,7 +456,7 @@ export async function createIO(server) {
         // This ensures new/refreshed sockets get data without waiting for next tick
         if (feed?.last?.has(token)) {
           const cachedData = feed.last.get(token);
-          if (cachedData && cachedData.ltp != null) {
+          if (cachedData && cachedData.ltp > 0) {
             socket.emit("market_update", cachedData);
           }
         }

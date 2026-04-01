@@ -32,6 +32,7 @@ import {
 import { resolveOrderValidity } from "../../services/orderValidity.js";
 import { isMCX } from "../../Utils/mcx/resolver.js";
 import { logFailedOrderAttempt } from "../../Utils/OrderAttemptLogger.js";
+import { getCachedLtp } from "../../services/livePriceCache.js";
 import { formatMarketClosedMessage, getMarketStatusForInstrument } from "../../Utils/tradingSession.js";
 
 const toNumber = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
@@ -175,12 +176,25 @@ const postOrder = asyncHandler(async (req, res) => {
       code: "VALIDATION_ERROR",
     });
   }
-  const rawEntryPrice = Number(price);
-  if (!Number.isFinite(rawEntryPrice) || rawEntryPrice <= 0) {
+  const frontendSubmittedPrice = Number(price);
+  if (!Number.isFinite(frontendSubmittedPrice) || frontendSubmittedPrice <= 0) {
     return failAttempt({
       status: 400,
       error: "price must be a positive number",
       code: "VALIDATION_ERROR",
+    });
+  }
+
+  // Override frontend price with server-side live LTP from feed cache
+  const { ltp: feedLtp } = getCachedLtp(String(instrument_token));
+  let rawEntryPrice;
+  if (feedLtp > 0) {
+    rawEntryPrice = feedLtp;
+  } else {
+    return failAttempt({
+      status: 400,
+      error: "Live price unavailable. Please try again.",
+      code: "LIVE_PRICE_UNAVAILABLE",
     });
   }
 
@@ -407,6 +421,7 @@ const postOrder = asyncHandler(async (req, res) => {
     raw_entry_price: rawEntryPrice,
     effective_entry_price: effectiveEntryPrice,
     entry_spread_applied: entryPricing.appliedSpread,
+    frontend_submitted_price: frontendSubmittedPrice,
     trigger_price: Number(body.trigger_price || 0),
     target: Number(body.target || 0),
     quantity: qtyNum,

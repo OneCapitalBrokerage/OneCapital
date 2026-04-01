@@ -520,22 +520,29 @@ export class KiteWebSocket {
       ? tick.last_trade_time.getTime()
       : (tick?.last_trade_time ? Number(new Date(tick.last_trade_time).getTime()) : null);
 
-    // Calculate net change and percent change
-    const ltp = tick.last_price || 0;
-    const close = tick.ohlc?.close || 0;
-    const netChange = close > 0 ? ltp - close : 0;
-    const percentChange = close > 0 ? ((ltp - close) / close) * 100 : 0;
+    // Preserve last known good LTP — never overwrite valid cached LTP with 0/null
+    const prevCached = this.last.get(token);
+    const rawLtp = tick.last_price;
+    const ltp = (typeof rawLtp === 'number' && rawLtp > 0)
+      ? rawLtp
+      : (prevCached?.ltp > 0 ? prevCached.ltp : null);
 
-    // Build normalized payload with Kite fields
+    const close = tick.ohlc?.close || 0;
+    const netChange = (ltp > 0 && close > 0) ? ltp - close : (prevCached?.netChange ?? 0);
+    const percentChange = (ltp > 0 && close > 0) ? ((ltp - close) / close) * 100 : (prevCached?.percentChange ?? 0);
+
+    // Build normalized payload — only include ltp when valid to protect cache via shallow merge
     const payload = {
       instrument_token: tick.instrument_token,
       mode: tick.mode,
-      ltp: ltp,
       tradable: tick.tradable,
       change: tick.change || 0,
       netChange: netChange,
       percentChange: percentChange
     };
+    if (ltp > 0) {
+      payload.ltp = ltp;
+    }
 
     // Add mode-specific fields
     if (tick.mode === 'quote' || tick.mode === 'full') {
