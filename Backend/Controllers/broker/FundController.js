@@ -150,6 +150,7 @@ const applyFundSnapshot = (fund, snapshot) => {
   // Update both legacy and new schema fields for option limit percentage
   fund.option_limit_percentage = optionChainLimitPercent;
   fund.option_premium.limit_percentage = optionChainLimitPercent;
+  if (fund.markModified) fund.markModified('option_premium');
 
   // Commodity buckets
   const commodityDeliveryAvailable = nonNegative(snapshot.commodityDeliveryAvailable ?? fund.commodity_delivery?.available_limit);
@@ -162,6 +163,7 @@ const applyFundSnapshot = (fund, snapshot) => {
     snapshot.commodityOptionLimitPercent ?? fund.commodity_option?.limit_percentage
   );
   fund.commodity_option.limit_percentage = commodityOptionLimitPercent;
+  if (fund.markModified) fund.markModified('commodity_option');
 
   fund.last_calculated_at = new Date();
 };

@@ -127,6 +127,7 @@ const updateClientMargin = asyncHandler(async (req, res) => {
     } else {
       fund.option_premium.limit_percentage = percentValue;
     }
+    if (fund.markModified) fund.markModified('option_premium');
     updates.optionLimitPercentage = percentValue;
     updateFlags.optionLimit = true;
   }
