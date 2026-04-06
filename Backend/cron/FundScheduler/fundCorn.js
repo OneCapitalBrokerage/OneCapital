@@ -124,15 +124,17 @@ async function reconcileFundMargin(fund) {
     customer_id_str,
     broker_id_str,
     status: { $in: ACTIVE_STATUSES },
-    $or: [
-      { exchange: { $regex: /MCX/i } },
-      { segment: { $regex: /MCX/i } },
-    ],
-    $or: [
-      { symbol: { $regex: /CE$/i } },
-      { symbol: { $regex: /PE$/i } },
-      { symbol: { $regex: /CALL$/i } },
-      { symbol: { $regex: /PUT$/i } },
+    $and: [
+      { $or: [
+        { exchange: { $regex: /MCX/i } },
+        { segment: { $regex: /MCX/i } },
+      ]},
+      { $or: [
+        { symbol: { $regex: /CE$/i } },
+        { symbol: { $regex: /PE$/i } },
+        { symbol: { $regex: /CALL$/i } },
+        { symbol: { $regex: /PUT$/i } },
+      ]},
     ],
   }).select('margin_blocked symbol').lean();
 
@@ -166,7 +168,8 @@ async function reconcileFundMargin(fund) {
   const currentDeliveryUsed = round2(toNumber(fund.delivery?.used_limit));
   const currentCommodityDeliveryUsed = round2(toNumber(fund.commodity_delivery?.used_limit));
   const currentCommodityOptionUsed = round2(toNumber(fund.commodity_option?.used));
-  const currentOptionPremiumUsed = round2(toNumber(fund.option_premium_used));
+  // Prefer new schema field, fallback to legacy
+  const currentOptionPremiumUsed = round2(toNumber(fund.option_premium?.used ?? fund.option_premium_used));
 
   let intradayFixed = false;
   let commodityIntradayFixed = false;
@@ -281,6 +284,12 @@ async function reconcileFundMargin(fund) {
       `[CRON] Reconcile option_premium ${customer_id_str}: was Rs${currentOptionPremiumUsed}, expected Rs${expectedOptionPremiumUsed} (drift Rs${drift})`
     );
 
+    // Update new schema field
+    if (!fund.option_premium) {
+      fund.option_premium = { limit_percentage: fund.option_limit_percentage ?? 10, used: 0 };
+    }
+    fund.option_premium.used = expectedOptionPremiumUsed;
+    // Also update legacy field for backward compatibility
     fund.option_premium_used = expectedOptionPremiumUsed;
 
     fund.transactions.push({

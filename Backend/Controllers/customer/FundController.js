@@ -323,26 +323,27 @@ const getBalance = asyncHandler(async (req, res) => {
   const depositedCash = toNumber(fund.net_available_balance);
   const pnlBalance = toNumber(fund.pnl_balance);
   const availableCash = depositedCash + pnlBalance;
-  const optionPercent = toNumber(fund.option_limit_percentage) || 10;
 
-  // Option premium = single pool of X% of opening balance
-  // Margin deductions go to the respective bucket, but the cap is one combined pool
-  const optionIntradayUsed = toNumber(fund.option_limit?.intraday?.used_today);
-  const optionDeliveryUsed = toNumber(fund.option_limit?.overnight?.used_today);
-  // Reconstruct original delivery limit (it gets decremented by option + delivery orders)
-  const originalDeliveryLimit = deliveryAvailable + deliveryUsed + optionDeliveryUsed;
-  const optionOpeningBalance = intradayAvailable + originalDeliveryLimit;
-  const optionLimit = Math.round((optionPercent / 100) * optionOpeningBalance * 100) / 100;
-  const optionUsed = optionIntradayUsed + optionDeliveryUsed;
+  // Equity Option Premium - standalone bucket derived from intraday + delivery
+  // Prefer new schema field, fallback to legacy
+  const optionPercent = toNumber(fund.option_premium?.limit_percentage ?? fund.option_limit_percentage) || 10;
+  const optionBase = intradayAvailable + deliveryAvailable;
+  const optionLimit = Math.round((optionPercent / 100) * optionBase * 100) / 100;
+  // Prefer new schema field, fallback to legacy
+  const optionUsed = toNumber(fund.option_premium?.used ?? fund.option_premium_used);
   const optionRemaining = Math.max(0, optionLimit - optionUsed);
+
+  // Commodity buckets
   const commodityDeliveryAvailable = toNumber(fund.commodity_delivery?.available_limit);
   const commodityDeliveryUsed = toNumber(fund.commodity_delivery?.used_limit);
   const commodityIntradayAvailable = toNumber(fund.commodity_intraday?.available_limit);
   const commodityIntradayUsed = toNumber(fund.commodity_intraday?.used_limit);
+  
+  // MCX Option Premium - standalone bucket derived from commodity intraday + delivery
   const commodityOptionPercent = toNumber(fund.commodity_option?.limit_percentage) || 10;
-  const commodityOptionUsed = toNumber(fund.commodity_option?.used);
   const commodityOptionBase = commodityIntradayAvailable + commodityDeliveryAvailable;
   const commodityOptionLimit = Math.round((commodityOptionBase * (commodityOptionPercent / 100)) * 100) / 100;
+  const commodityOptionUsed = toNumber(fund.commodity_option?.used);
   const commodityOptionRemaining = Math.max(0, commodityOptionLimit - commodityOptionUsed);
 
   // Calculate pay-in summary from approved/completed withdrawals in the current
@@ -437,12 +438,10 @@ const getBalance = asyncHandler(async (req, res) => {
       },
       optionPremium: {
         percent: optionPercent,
-        base: optionOpeningBalance,
+        base: optionBase,
         limit: optionLimit,
         used: optionUsed,
         remaining: optionRemaining,
-        usedIntraday: optionIntradayUsed,
-        usedDelivery: optionDeliveryUsed,
       },
       commodityDelivery: {
         available: commodityDeliveryAvailable,

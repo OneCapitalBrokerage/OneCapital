@@ -1,13 +1,18 @@
 /**
  * OptionLimitManager.js
- * Option premium = single pool of X% of opening balance (intraday + delivery).
- * When an option order is placed, the margin is deducted from the respective bucket
- * (intraday.used_limit for MIS, overnight.available_limit for CNC/NRML).
- * Total option usage across ALL buckets cannot exceed the single combined cap.
- *
- * MCX commodity options use a separate commodity_option bucket:
- * - Cap = commodity_option.limit_percentage % of commodity_delivery.available_limit
- * - Usage tracked in commodity_option.used
+ * 
+ * Option premium buckets are STANDALONE pools derived from parent bucket limits.
+ * They do NOT deduct from intraday/delivery buckets.
+ * 
+ * Equity Options (NFO-OPT, BFO-OPT):
+ * - Bucket: option_premium
+ * - Limit = X% of (intraday.available_limit + overnight.available_limit)
+ * - MIS and CNC options share the same pool
+ * 
+ * MCX Options (MCX-OPT):
+ * - Bucket: commodity_option
+ * - Limit = X% of (commodity_intraday.available_limit + commodity_delivery.available_limit)
+ * - MIS and CNC options share the same pool
  */
 
 import { isMCX } from './mcx/resolver.js';
@@ -19,171 +24,193 @@ const toNumber = (value) => {
 
 const nonNegative = (value) => Math.max(0, toNumber(value));
 
-const initOptionLimit = (fund, typeKey) => {
-    if (!fund.option_limit) fund.option_limit = {};
-    if (!fund.option_limit[typeKey]) {
-        fund.option_limit[typeKey] = { used_today: 0, last_trade_date: new Date() };
-    }
-    // Date check — reset if new day
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    let lastDate = fund.option_limit[typeKey].last_trade_date
-        ? new Date(fund.option_limit[typeKey].last_trade_date)
-        : null;
-    if (lastDate) lastDate.setHours(0, 0, 0, 0);
-    if (!lastDate || lastDate.getTime() !== today.getTime()) {
-        fund.option_limit[typeKey].used_today = 0;
-        fund.option_limit[typeKey].last_trade_date = new Date();
-    }
+/**
+ * Helper to detect if a symbol is an option
+ * @param {string} symbol - Trading symbol
+ * @returns {boolean}
+ */
+export const isOptionSymbol = (symbol) => {
+    if (!symbol) return false;
+    const s = String(symbol).toUpperCase();
+    return s.endsWith('CE') || s.endsWith('PE') || s.endsWith('CALL') || s.endsWith('PUT');
 };
 
+/**
+ * Calculate option premium limit for equity options
+ * @param {Object} fund - Fund document
+ * @returns {{ base: number, limitPercent: number, limit: number, used: number, remaining: number }}
+ */
+export const getEquityOptionLimitInfo = (fund) => {
+    const intradayAvailable = nonNegative(fund.intraday?.available_limit);
+    const overnightAvailable = nonNegative(fund.overnight?.available_limit);
+    const base = intradayAvailable + overnightAvailable;
+    
+    // Prefer new schema field, fallback to legacy
+    const limitPercent = fund.option_premium?.limit_percentage ?? fund.option_limit_percentage ?? 10;
+    const limit = base * (limitPercent / 100);
+    
+    // Prefer new schema field, fallback to legacy
+    const used = nonNegative(fund.option_premium?.used ?? fund.option_premium_used ?? 0);
+    const remaining = Math.max(0, limit - used);
+    
+    return { base, limitPercent, limit, used, remaining };
+};
+
+/**
+ * Calculate option premium limit for MCX options
+ * @param {Object} fund - Fund document
+ * @returns {{ base: number, limitPercent: number, limit: number, used: number, remaining: number }}
+ */
+export const getMcxOptionLimitInfo = (fund) => {
+    const commodityIntradayAvailable = nonNegative(fund.commodity_intraday?.available_limit);
+    const commodityDeliveryAvailable = nonNegative(fund.commodity_delivery?.available_limit);
+    const base = commodityIntradayAvailable + commodityDeliveryAvailable;
+    
+    const limitPercent = fund.commodity_option?.limit_percentage ?? 10;
+    const limit = base * (limitPercent / 100);
+    const used = nonNegative(fund.commodity_option?.used);
+    const remaining = Math.max(0, limit - used);
+    
+    return { base, limitPercent, limit, used, remaining };
+};
+
+/**
+ * Check if an option order can be placed within limits
+ * @param {Object} fund - Fund document
+ * @param {string} product - Product type (MIS, CNC, NRML) - not used for bucket selection, only for logging
+ * @param {number} requiredMargin - Margin required for the order
+ * @param {Object} opts - Additional options
+ * @param {string} opts.exchange - Exchange (e.g., 'NFO', 'MCX')
+ * @param {string} opts.segment - Segment
+ * @returns {{ allowed: boolean, message?: string }}
+ */
 export const checkOptionLimit = (fund, product, requiredMargin, { exchange, segment } = {}) => {
-    const productNorm = String(product).trim().toUpperCase();
     const mcx = isMCX({ exchange, segment });
 
-    // MCX commodity options use separate commodity_option bucket
     if (mcx) {
-        const limitPercent = fund.commodity_option?.limit_percentage ?? 10;
-        const commodityIntradayAvailable = nonNegative(fund.commodity_intraday?.available_limit);
-        const commodityDeliveryAvailable = nonNegative(fund.commodity_delivery?.available_limit);
-        const commodityBase = commodityIntradayAvailable + commodityDeliveryAvailable;
-        const dailyCap = commodityBase * (limitPercent / 100);
-        const used = nonNegative(fund.commodity_option?.used);
-
-        if ((used + requiredMargin) > dailyCap) {
+        // MCX Options - use commodity_option bucket
+        const info = getMcxOptionLimitInfo(fund);
+        
+        if ((info.used + requiredMargin) > info.limit) {
             return {
                 allowed: false,
-                message: `Commodity Option Limit Exceeded (${limitPercent}% of commodity margin). Max: ${dailyCap.toFixed(2)}, Used: ${used.toFixed(2)}, Required: ${requiredMargin.toFixed(2)}`,
+                message: `Commodity Option Premium Limit Exceeded (${info.limitPercent}% of commodity margin). Limit: ${info.limit.toFixed(2)}, Used: ${info.used.toFixed(2)}, Required: ${requiredMargin.toFixed(2)}`,
             };
         }
+        
         return { allowed: true };
     }
 
-    const isOvernight = productNorm === 'NRML' || productNorm === 'CNC';
-    const typeKey = isOvernight ? 'overnight' : 'intraday';
-
-    // Initialize both trackers (for combined usage calculation)
-    initOptionLimit(fund, 'intraday');
-    initOptionLimit(fund, 'overnight');
-
-    // Single combined cap = X% of opening balance (intraday_limit + delivery_limit)
-    const limitPercent = fund.option_limit_percentage !== undefined ? Number(fund.option_limit_percentage) : 10;
-    const intradayLimit = nonNegative(fund.intraday?.available_limit);
-    // For overnight: available_limit gets decremented by orders, add back today's option usage
-    const overnightOptionUsed = fund.option_limit.overnight.used_today || 0;
-    const originalOvernightLimit = nonNegative(fund.overnight?.available_limit) + overnightOptionUsed;
-    const openingBalance = intradayLimit + originalOvernightLimit;
-    const dailyCap = openingBalance * (limitPercent / 100);
-
-    // Total option usage across BOTH buckets
-    const intradayOptionUsed = fund.option_limit.intraday.used_today || 0;
-    const totalOptionUsed = intradayOptionUsed + overnightOptionUsed;
-
-    // Check combined option cap
-    if ((totalOptionUsed + requiredMargin) > dailyCap) {
+    // Equity Options - use option_premium bucket
+    const info = getEquityOptionLimitInfo(fund);
+    
+    if ((info.used + requiredMargin) > info.limit) {
         return {
             allowed: false,
-            message: `Option Premium Limit Exceeded (${limitPercent}% of opening balance). Max: ${dailyCap.toFixed(2)}, Used Today: ${totalOptionUsed.toFixed(2)}, Required: ${requiredMargin.toFixed(2)}`
-        };
-    }
-
-    // Check that the respective margin bucket has enough room
-    let availableMargin;
-    if (isOvernight) {
-        availableMargin = nonNegative(fund.overnight?.available_limit);
-    } else {
-        availableMargin = nonNegative(fund.intraday?.available_limit) - nonNegative(fund.intraday?.used_limit);
-    }
-
-    if (requiredMargin > availableMargin) {
-        const bucketLabel = isOvernight ? 'Delivery' : 'Intraday';
-        return {
-            allowed: false,
-            message: `Insufficient ${bucketLabel} Funds for option order! Required: ${requiredMargin.toFixed(2)}, Available: ${availableMargin.toFixed(2)}`
+            message: `Option Premium Limit Exceeded (${info.limitPercent}% of opening balance). Limit: ${info.limit.toFixed(2)}, Used: ${info.used.toFixed(2)}, Required: ${requiredMargin.toFixed(2)}`,
         };
     }
 
     return { allowed: true };
 };
 
+/**
+ * Reserve margin for an option order (deducts from option bucket only)
+ * @param {Object} fund - Fund document (mutated in-memory, caller must save)
+ * @param {string} product - Product type (MIS, CNC, NRML)
+ * @param {number} amount - Margin to reserve
+ * @param {Object} opts - Additional options
+ * @param {string} opts.exchange - Exchange
+ * @param {string} opts.segment - Segment
+ */
 export const updateOptionUsage = (fund, product, amount, { exchange, segment } = {}) => {
     if (amount <= 0) return;
 
     const mcx = isMCX({ exchange, segment });
 
-    // MCX commodity option usage
     if (mcx) {
-        fund.commodity_option.used = nonNegative(fund.commodity_option?.used) + Number(amount);
+        // MCX Options - deduct from commodity_option.used only
+        if (!fund.commodity_option) {
+            fund.commodity_option = { limit_percentage: 10, used: 0 };
+        }
+        fund.commodity_option.used = nonNegative(fund.commodity_option.used) + Number(amount);
+        
         if (fund.markModified) fund.markModified('commodity_option');
-        console.log(`[OptionLimit] MCX commodity option: +${amount}`);
+        console.log(`[OptionLimit] MCX option reserved: +${amount}, Total used: ${fund.commodity_option.used}`);
         return;
     }
 
-    const productNorm = String(product).trim().toUpperCase();
-    const isOvernight = productNorm === 'NRML' || productNorm === 'CNC';
-    const typeKey = isOvernight ? 'overnight' : 'intraday';
-
-    initOptionLimit(fund, typeKey);
-
-    // Track daily option usage per bucket (for combined cap enforcement)
-    fund.option_limit[typeKey].used_today = (fund.option_limit[typeKey].used_today || 0) + Number(amount);
-    fund.option_limit[typeKey].last_trade_date = new Date();
-
-    // Track total option_premium_used (for display)
-    fund.option_premium_used = (toNumber(fund.option_premium_used) || 0) + Number(amount);
-
-    // Deduct from the ACTUAL margin bucket
-    if (isOvernight) {
-        fund.overnight.available_limit = Math.max(0, toNumber(fund.overnight.available_limit) - Number(amount));
-    } else {
-        fund.intraday.used_limit = toNumber(fund.intraday.used_limit) + Number(amount);
+    // Equity Options - deduct from option_premium.used only
+    if (!fund.option_premium) {
+        fund.option_premium = { 
+            limit_percentage: fund.option_limit_percentage ?? 10, 
+            used: 0 
+        };
     }
+    fund.option_premium.used = nonNegative(fund.option_premium.used) + Number(amount);
+    
+    // Also update legacy field for backward compatibility
+    fund.option_premium_used = nonNegative(fund.option_premium_used) + Number(amount);
 
     if (fund.markModified) {
-        fund.markModified('option_limit');
+        fund.markModified('option_premium');
         fund.markModified('option_premium_used');
-        fund.markModified(isOvernight ? 'overnight' : 'intraday');
     }
-
-    console.log(`[OptionLimit] Updated ${typeKey}: +${amount}, Margin deducted from ${typeKey}`);
+    console.log(`[OptionLimit] Equity option reserved: +${amount}, Total used: ${fund.option_premium.used}`);
 };
 
+/**
+ * Release margin when an option order is closed, cancelled, or rejected
+ * @param {Object} fund - Fund document (mutated in-memory, caller must save)
+ * @param {string} product - Product type (MIS, CNC, NRML)
+ * @param {number} amount - Margin to release
+ * @param {Object} opts - Additional options
+ * @param {string} opts.exchange - Exchange
+ * @param {string} opts.segment - Segment
+ */
 export const rollbackOptionUsage = (fund, product, amount, { exchange, segment } = {}) => {
     if (amount <= 0) return;
 
     const mcx = isMCX({ exchange, segment });
 
-    // MCX commodity option rollback
     if (mcx) {
-        fund.commodity_option.used = Math.max(0, nonNegative(fund.commodity_option?.used) - Number(amount));
+        // MCX Options - release from commodity_option.used
+        if (!fund.commodity_option) {
+            fund.commodity_option = { limit_percentage: 10, used: 0 };
+        }
+        fund.commodity_option.used = Math.max(0, nonNegative(fund.commodity_option.used) - Number(amount));
+        
         if (fund.markModified) fund.markModified('commodity_option');
-        console.log(`[OptionLimit] MCX commodity option rollback: -${amount}`);
+        console.log(`[OptionLimit] MCX option released: -${amount}, Total used: ${fund.commodity_option.used}`);
         return;
     }
 
-    const productNorm = String(product).trim().toUpperCase();
-    const isOvernight = productNorm === 'NRML' || productNorm === 'CNC';
-    const typeKey = isOvernight ? 'overnight' : 'intraday';
-
-    initOptionLimit(fund, typeKey);
-
-    const limitTracker = fund.option_limit[typeKey];
-    limitTracker.used_today = Math.max(0, (limitTracker.used_today || 0) - Number(amount));
-
-    // Rollback total option_premium_used
-    fund.option_premium_used = Math.max(0, (toNumber(fund.option_premium_used) || 0) - Number(amount));
-
-    // Release margin back to the ACTUAL bucket
-    if (isOvernight) {
-        fund.overnight.available_limit = toNumber(fund.overnight.available_limit) + Number(amount);
-    } else {
-        fund.intraday.used_limit = Math.max(0, toNumber(fund.intraday.used_limit) - Number(amount));
+    // Equity Options - release from option_premium.used
+    if (!fund.option_premium) {
+        fund.option_premium = { 
+            limit_percentage: fund.option_limit_percentage ?? 10, 
+            used: 0 
+        };
     }
+    fund.option_premium.used = Math.max(0, nonNegative(fund.option_premium.used) - Number(amount));
+    
+    // Also update legacy field for backward compatibility
+    fund.option_premium_used = Math.max(0, nonNegative(fund.option_premium_used) - Number(amount));
 
     if (fund.markModified) {
-        fund.markModified('option_limit');
+        fund.markModified('option_premium');
         fund.markModified('option_premium_used');
-        fund.markModified(isOvernight ? 'overnight' : 'intraday');
     }
-    console.log(`[OptionLimit] Rollback ${typeKey}: -${amount}, Margin released to ${typeKey}`);
+    console.log(`[OptionLimit] Equity option released: -${amount}, Total used: ${fund.option_premium.used}`);
+};
+
+/**
+ * Get the option bucket name for an order
+ * @param {Object} opts - Options
+ * @param {string} opts.exchange - Exchange
+ * @param {string} opts.segment - Segment
+ * @returns {'option_premium' | 'commodity_option'}
+ */
+export const getOptionBucket = ({ exchange, segment } = {}) => {
+    return isMCX({ exchange, segment }) ? 'commodity_option' : 'option_premium';
 };

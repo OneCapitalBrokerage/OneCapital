@@ -174,7 +174,25 @@ export function releaseMarginOnClose(fund, order, opts = {}) {
     || order.meta?.margin_hold?.bucket
     || getMarginBucket(order.product, { exchange: order.exchange, segment: order.segment });
 
-  if (bucket === 'intraday') {
+  // Handle option buckets (option_premium, commodity_option)
+  if (bucket === 'option_premium') {
+    if (!fund.option_premium) {
+      fund.option_premium = { limit_percentage: 10, used: 0 };
+    }
+    fund.option_premium.used = Math.max(0, toNumber(fund.option_premium.used) - amount);
+    // Also update legacy field for backward compatibility
+    fund.option_premium_used = Math.max(0, toNumber(fund.option_premium_used) - amount);
+    if (fund.markModified) {
+      fund.markModified('option_premium');
+      fund.markModified('option_premium_used');
+    }
+  } else if (bucket === 'commodity_option') {
+    if (!fund.commodity_option) {
+      fund.commodity_option = { limit_percentage: 10, used: 0 };
+    }
+    fund.commodity_option.used = Math.max(0, toNumber(fund.commodity_option.used) - amount);
+    if (fund.markModified) fund.markModified('commodity_option');
+  } else if (bucket === 'intraday') {
     fund.intraday.used_limit = Math.max(0, toNumber(fund.intraday.used_limit) - amount);
   } else if (bucket === 'commodity_intraday') {
     fund.commodity_intraday.used_limit = Math.max(0, toNumber(fund.commodity_intraday?.used_limit) - amount);
@@ -214,7 +232,25 @@ export function releaseMarginOnClose(fund, order, opts = {}) {
 export function refundMarginImmediate(fund, bucket, amount, opts = {}) {
   if (amount <= 0) return;
 
-  if (bucket === 'intraday') {
+  // Handle option buckets (option_premium, commodity_option)
+  if (bucket === 'option_premium') {
+    if (!fund.option_premium) {
+      fund.option_premium = { limit_percentage: 10, used: 0 };
+    }
+    fund.option_premium.used = Math.max(0, toNumber(fund.option_premium.used) - amount);
+    // Also update legacy field for backward compatibility
+    fund.option_premium_used = Math.max(0, toNumber(fund.option_premium_used) - amount);
+    if (fund.markModified) {
+      fund.markModified('option_premium');
+      fund.markModified('option_premium_used');
+    }
+  } else if (bucket === 'commodity_option') {
+    if (!fund.commodity_option) {
+      fund.commodity_option = { limit_percentage: 10, used: 0 };
+    }
+    fund.commodity_option.used = Math.max(0, toNumber(fund.commodity_option.used) - amount);
+    if (fund.markModified) fund.markModified('commodity_option');
+  } else if (bucket === 'intraday') {
     fund.intraday.used_limit = Math.max(0, toNumber(fund.intraday.used_limit) - amount);
   } else if (bucket === 'commodity_intraday') {
     fund.commodity_intraday.used_limit = Math.max(0, toNumber(fund.commodity_intraday?.used_limit) - amount);

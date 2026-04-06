@@ -306,7 +306,14 @@ const postOrder = asyncHandler(async (req, res) => {
   if (isOption) {
     // If broker provides a new limit % in payload, update it FIRST
     if (body.option_limit_percentage !== undefined && body.option_limit_percentage !== null) {
-        fund.option_limit_percentage = Number(body.option_limit_percentage);
+        const percentValue = Number(body.option_limit_percentage);
+        fund.option_limit_percentage = percentValue;
+        // Sync new schema field
+        if (!fund.option_premium) {
+          fund.option_premium = { limit_percentage: percentValue, used: 0 };
+        } else {
+          fund.option_premium.limit_percentage = percentValue;
+        }
         await fund.save(); // Save immediately so checkOptionLimit sees new value
     }
 

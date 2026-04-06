@@ -383,6 +383,7 @@ const createClient = asyncHandler(async (req, res) => {
     overnight: { available_limit: 0, used_limit: 0 },
     delivery: { available: 0, used: 0, available_limit: 0, used_limit: 0 },
     option_limit_percentage: 10,
+    option_premium: { limit_percentage: 10, used: 0 },
     commodity_delivery: { available_limit: 0, used_limit: 0 },
     commodity_option: { limit_percentage: 10, used: 0 },
   });
@@ -1033,6 +1034,10 @@ const restoreClient = asyncHandler(async (req, res) => {
     overnight: archivedFund.overnight || { available_limit: 0, used_limit: 0 },
     delivery: archivedFund.delivery || { available: 0, used: 0, available_limit: 0, used_limit: 0 },
     option_limit_percentage: archivedFund.option_limit_percentage || 10,
+    option_premium: archivedFund.option_premium || { 
+      limit_percentage: archivedFund.option_limit_percentage || 10, 
+      used: 0 
+    },
     commodity_delivery: archivedFund.commodity_delivery || { available_limit: 0, used_limit: 0 },
     commodity_option: archivedFund.commodity_option || { limit_percentage: 10, used: 0 },
   });

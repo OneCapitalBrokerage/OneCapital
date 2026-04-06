@@ -6,6 +6,12 @@ import OrderModel from '../../Model/Trading/OrdersModel.js';
 import CustomerModel from '../../Model/Auth/CustomerModel.js';
 import FundModel from '../../Model/FundManagement/FundModel.js';
 import { refundMarginImmediate, reserveMargin, getMarginBucket } from '../../services/marginLifecycle.js';
+import { 
+  checkOptionLimit, 
+  updateOptionUsage, 
+  isOptionSymbol, 
+  getOptionBucket,
+} from '../../Utils/OptionLimitManager.js';
 import { resolveOrderValidity } from '../../services/orderValidity.js';
 import { removeFromWatchlist, updateTriggerInWatchlist } from '../../Utils/OrderManager.js';
 
@@ -142,17 +148,48 @@ const approveCncOrder = asyncHandler(async (req, res) => {
       });
     }
 
-    const bucket = getMarginBucket(order.product, { exchange: order.exchange, segment: order.segment });
-    // Only reserve from delivery / commodity_delivery — MIS (intraday) is reserved at placement
-    if (bucket !== 'intraday') {
-      const result = reserveMargin(fund, bucket, marginToReserve);
-      if (!result.ok) {
+    // Check if this is an option order
+    const isOption = order.meta?.margin_hold?.isOption === true || isOptionSymbol(order.symbol);
+    
+    if (isOption) {
+      // Option orders: check and reserve from option_premium or commodity_option bucket
+      const optionCheck = checkOptionLimit(fund, order.product, marginToReserve, {
+        exchange: order.exchange,
+        segment: order.segment,
+      });
+      if (!optionCheck.allowed) {
         return res.status(400).json({
           success: false,
-          message: result.error || 'Insufficient margin to approve this order.',
+          message: optionCheck.message || 'Insufficient option premium limit to approve this order.',
         });
       }
+      updateOptionUsage(fund, order.product, marginToReserve, {
+        exchange: order.exchange,
+        segment: order.segment,
+      });
+      // Update order meta with bucket info
+      if (!order.meta) order.meta = {};
+      order.meta.margin_hold = {
+        ...order.meta.margin_hold,
+        bucket: getOptionBucket({ exchange: order.exchange, segment: order.segment }),
+        isOption: true,
+        reserved: true,
+      };
       await fund.save();
+    } else {
+      // Non-option orders: use regular margin buckets
+      const bucket = getMarginBucket(order.product, { exchange: order.exchange, segment: order.segment });
+      // Only reserve from delivery / commodity_delivery — MIS (intraday) is reserved at placement
+      if (bucket !== 'intraday') {
+        const result = reserveMargin(fund, bucket, marginToReserve);
+        if (!result.ok) {
+          return res.status(400).json({
+            success: false,
+            message: result.error || 'Insufficient margin to approve this order.',
+          });
+        }
+        await fund.save();
+      }
     }
   }
 

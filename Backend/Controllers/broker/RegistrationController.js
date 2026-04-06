@@ -266,6 +266,7 @@ const approveRegistration = asyncHandler(async (req, res) => {
       overnight: { available_limit: 0, used_limit: 0 },
       delivery: { available: 0, used: 0, available_limit: 0, used_limit: 0 },
       option_limit_percentage: 10,
+      option_premium: { limit_percentage: 10, used: 0 },
       commodity_delivery: { available_limit: 0, used_limit: 0 },
       commodity_option: { limit_percentage: 10, used: 0 },
     }], findOptions);

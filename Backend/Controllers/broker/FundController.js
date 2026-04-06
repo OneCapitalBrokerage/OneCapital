@@ -41,6 +41,7 @@ const normalizeFundDocument = (fund) => {
   if (!fund.commodity_delivery) fund.commodity_delivery = { available_limit: 0, used_limit: 0 };
   if (!fund.commodity_intraday) fund.commodity_intraday = { available_limit: 0, used_limit: 0 };
   if (!fund.commodity_option) fund.commodity_option = { limit_percentage: 10, used: 0 };
+  if (!fund.option_premium) fund.option_premium = { limit_percentage: fund.option_limit_percentage ?? 10, used: 0 };
   return fund;
 };
 
@@ -53,8 +54,12 @@ const getFundSnapshot = (fund) => {
   const longTermAvailable = nonNegative(fund.overnight?.available_limit ?? fund.delivery?.available);
   const openingBalance = intradayAvailable + longTermAvailable;
   const marginUsed = nonNegative(fund.used_margin ?? intradayUsed);
-  const optionChainLimitPercent = normalizeOptionLimitPercent(fund.option_limit_percentage);
+  // Prefer new schema field, fallback to legacy
+  const optionChainLimitPercent = normalizeOptionLimitPercent(
+    fund.option_premium?.limit_percentage ?? fund.option_limit_percentage
+  );
   const optionChainLimit = Number(((openingBalance * optionChainLimitPercent) / 100).toFixed(2));
+  const optionPremiumUsed = nonNegative(fund.option_premium?.used ?? fund.option_premium_used);
   const commodityDeliveryAvailable = nonNegative(fund.commodity_delivery?.available_limit);
   const commodityDeliveryUsed = nonNegative(fund.commodity_delivery?.used_limit);
   const commodityIntradayAvailable = nonNegative(fund.commodity_intraday?.available_limit);
@@ -75,6 +80,7 @@ const getFundSnapshot = (fund) => {
     marginUsed,
     optionChainLimit,
     optionChainLimitPercent,
+    optionPremiumUsed,
     commodityDeliveryAvailable,
     commodityDeliveryUsed,
     commodityIntradayAvailable,
@@ -124,7 +130,7 @@ const applyFundSnapshot = (fund, snapshot) => {
   const intradayAvailable = nonNegative(snapshot.intradayAvailable);
   const longTermAvailable = nonNegative(snapshot.longTermAvailable);
   const optionChainLimitPercent = normalizeOptionLimitPercent(
-    snapshot.optionChainLimitPercent ?? fund.option_limit_percentage
+    snapshot.optionChainLimitPercent ?? fund.option_premium?.limit_percentage ?? fund.option_limit_percentage
   );
 
   normalizeFundDocument(fund);
@@ -141,7 +147,9 @@ const applyFundSnapshot = (fund, snapshot) => {
   fund.overnight.available_limit = longTermAvailable;
   fund.delivery.available = longTermAvailable;
 
+  // Update both legacy and new schema fields for option limit percentage
   fund.option_limit_percentage = optionChainLimitPercent;
+  fund.option_premium.limit_percentage = optionChainLimitPercent;
 
   // Commodity buckets
   const commodityDeliveryAvailable = nonNegative(snapshot.commodityDeliveryAvailable ?? fund.commodity_delivery?.available_limit);
@@ -190,6 +198,8 @@ const findOrCreateFund = async (customer, brokerIdStr) => {
       overnight: { available_limit: 0, used_limit: 0 },
       delivery: { available: 0, used: 0 },
       option_limit_percentage: DEFAULT_OPTION_CHAIN_LIMIT_PERCENT,
+      option_premium: { limit_percentage: DEFAULT_OPTION_CHAIN_LIMIT_PERCENT, used: 0 },
+      option_premium_used: 0,
       commodity_delivery: { available_limit: 0, used_limit: 0 },
       commodity_intraday: { available_limit: 0, used_limit: 0 },
       commodity_option: { limit_percentage: DEFAULT_OPTION_CHAIN_LIMIT_PERCENT, used: 0 },

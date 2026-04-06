@@ -80,6 +80,7 @@ const updateClientMargin = asyncHandler(async (req, res) => {
       overnight: { available_limit: 0, used_limit: 0 },
       delivery: { available: 0, used: 0, available_limit: 0, used_limit: 0 },
       option_limit_percentage: 10,
+      option_premium: { limit_percentage: 10, used: 0 },
       commodity_delivery: { available_limit: 0, used_limit: 0 },
       commodity_option: { limit_percentage: 10, used: 0 },
     });
@@ -118,8 +119,15 @@ const updateClientMargin = asyncHandler(async (req, res) => {
 
   // Update option limit percentage
   if (optionLimitPercentage !== undefined) {
-    fund.option_limit_percentage = Number(optionLimitPercentage);
-    updates.optionLimitPercentage = Number(optionLimitPercentage);
+    const percentValue = Number(optionLimitPercentage);
+    fund.option_limit_percentage = percentValue;
+    // Sync new schema field
+    if (!fund.option_premium) {
+      fund.option_premium = { limit_percentage: percentValue, used: 0 };
+    } else {
+      fund.option_premium.limit_percentage = percentValue;
+    }
+    updates.optionLimitPercentage = percentValue;
     updateFlags.optionLimit = true;
   }
 

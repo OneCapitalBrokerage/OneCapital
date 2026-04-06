@@ -52,6 +52,13 @@ const FundSchema = new mongoose.Schema({
     limit_percentage: { type: Number, default: 10 },
     used: { type: Number, default: 0 },
   },
+
+  // Equity Option Premium bucket (NFO-OPT, BFO-OPT)
+  // Standalone pool: limit = X% of (intraday.available_limit + overnight.available_limit)
+  option_premium: {
+    limit_percentage: { type: Number, default: 10 },
+    used: { type: Number, default: 0 },
+  },
   
   // Withdrawable
   withdrawable_balance: { type: Number, default: 0 },
@@ -63,10 +70,10 @@ const FundSchema = new mongoose.Schema({
     max_order_value: { type: Number, default: 0 }, // 0 = unlimited
   },
 
-  // Option limit percentage (legacy)
+  // @deprecated - use option_premium.limit_percentage instead
   option_limit_percentage: { type: Number, default: 10 },
 
-  // Optional tracker for option premium consumption
+  // @deprecated - use option_premium.used instead
   option_premium_used: { type: Number, default: 0 },
 
   // Transaction ledger used by customer funds history/summary cards
