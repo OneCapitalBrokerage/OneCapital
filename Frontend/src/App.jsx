@@ -30,9 +30,7 @@ const ProfileEdit = lazy(() => import('./modules/customer/ProfileEdit'));
 const Funds = lazy(() => import('./modules/customer/Funds'));
 const FundStatement = lazy(() => import('./modules/customer/FundStatement'));
 const AddFunds = lazy(() => import('./modules/customer/AddFunds'));
-const AddFundsConfirm = lazy(() => import('./modules/customer/AddFundsConfirm'));
 const WithdrawFunds = lazy(() => import('./modules/customer/WithdrawFunds'));
-const WithdrawalConfirm = lazy(() => import('./modules/customer/WithdrawalConfirm'));
 const Payments = lazy(() => import('./modules/customer/Payments'));
 const AccountSettings = lazy(() => import('./modules/customer/AccountSettings'));
 const AddBankAccount = lazy(() => import('./modules/customer/AddBankAccount'));
@@ -295,9 +293,9 @@ function App() {
                 <Route path="/order-book" element={<RequireCustomerAuth><OrderBook /></RequireCustomerAuth>} />
                 <Route path="/funds/add" element={<RequireCustomerAuth><AddFunds /></RequireCustomerAuth>} />
                 <Route path="/funds/history" element={<RequireCustomerAuth><FundStatement /></RequireCustomerAuth>} />
-                <Route path="/funds/add/confirm" element={<RequireCustomerAuth><AddFundsConfirm /></RequireCustomerAuth>} />
+                <Route path="/funds/add/confirm" element={<RequireCustomerAuth><Navigate to="/funds/add" replace /></RequireCustomerAuth>} />
                 <Route path="/funds/withdraw" element={<RequireCustomerAuth><WithdrawFunds /></RequireCustomerAuth>} />
-                <Route path="/funds/withdraw/confirm" element={<RequireCustomerAuth><WithdrawalConfirm /></RequireCustomerAuth>} />
+                <Route path="/funds/withdraw/confirm" element={<RequireCustomerAuth><Navigate to="/funds/withdraw" replace /></RequireCustomerAuth>} />
                 <Route path="/profile/payments" element={<RequireCustomerAuth><Payments /></RequireCustomerAuth>} />
                 <Route path="/settings" element={<RequireCustomerAuth><AccountSettings /></RequireCustomerAuth>} />
                 <Route path="/profile/bank-account/add" element={<RequireCustomerAuth><AddBankAccount /></RequireCustomerAuth>} />

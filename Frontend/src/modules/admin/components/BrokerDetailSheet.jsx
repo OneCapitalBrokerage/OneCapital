@@ -1,6 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import adminApi from '../../../api/admin';
+import { setAuthToken, setRefreshToken, setStoredUser } from '../../../api/index';
+import {
+  clearAdminBrokerSwitchSnapshot,
+  saveAdminBrokerSwitchSnapshot,
+} from '../../../utils/adminBrokerSwitch';
 import DeleteBrokerConfirmModal from './DeleteBrokerConfirmModal';
 
 const BrokerDetailSheet = ({ brokerId, onClose }) => {
@@ -104,6 +109,33 @@ const BrokerDetailSheet = ({ brokerId, onClose }) => {
   const handleDelete = async () => {
     if (!broker?._id && !broker?.id) return;
     setShowDeleteModal(true);
+  };
+
+  const handleLoginAsBroker = async () => {
+    if (!broker) return;
+    setActionLoading(true);
+    setError(null);
+
+    try {
+      saveAdminBrokerSwitchSnapshot({
+        returnTo: window.location.pathname + window.location.search,
+      });
+
+      const res = await adminApi.loginAsBroker(broker._id || broker.id);
+      const accessToken = res.accessToken || res.token;
+      if (!accessToken || !res.broker) {
+        throw new Error('Invalid broker session response.');
+      }
+
+      setAuthToken(accessToken);
+      setRefreshToken(res.refreshToken || null);
+      setStoredUser({ ...res.broker, role: 'broker' });
+      window.location.href = '/broker/dashboard';
+    } catch (err) {
+      clearAdminBrokerSwitchSnapshot();
+      setError(err?.response?.data?.message || err.message || 'Failed to login as broker');
+      setActionLoading(false);
+    }
   };
 
   const handleConfirmDelete = async () => {
@@ -327,6 +359,25 @@ const BrokerDetailSheet = ({ brokerId, onClose }) => {
               {/* Block / Unblock */}
               <div className="bg-gray-50 rounded-xl p-4">
                 <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Controls</p>
+                <div className={`flex items-center justify-between bg-white p-3 rounded-xl mb-2 ${actionLoading ? 'opacity-60 pointer-events-none' : ''}`}>
+                  <div className="flex items-center gap-2">
+                    <div className="p-2 rounded-full bg-blue-50 text-[#137fec]">
+                      <span className="material-symbols-outlined text-[18px]">login</span>
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold">Login As Broker</p>
+                      <p className="text-[10px] text-gray-500">Switch into broker panel directly</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleLoginAsBroker}
+                    disabled={broker.status === 'blocked' || broker.status === 'suspended' || broker.status === 'inactive'}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-100 text-blue-700 disabled:bg-gray-100 disabled:text-gray-400"
+                  >
+                    {actionLoading ? 'Switching...' : 'Login'}
+                  </button>
+                </div>
+
                 <div className={`flex items-center justify-between bg-white p-3 rounded-xl ${actionLoading ? 'opacity-60 pointer-events-none' : ''}`}>
                   <div className="flex items-center gap-2">
                     <div className={`p-2 rounded-full ${broker.status === 'blocked' ? 'bg-orange-50 text-orange-500' : 'bg-red-50 text-red-500'}`}>

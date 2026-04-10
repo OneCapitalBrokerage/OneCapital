@@ -2,6 +2,33 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import brokerApi from '../../api/broker';
 
 const DEFAULT_OPTION_CHAIN_PERCENT = 10;
+const MANUAL_DEPOSIT_METHODS = [
+  { key: 'upi', label: 'UPI' },
+  { key: 'imps', label: 'IMPS' },
+  { key: 'neft', label: 'NEFT' },
+  { key: 'rtgs', label: 'RTGS' },
+  { key: 'bank_transfer', label: 'Bank Transfer' },
+  { key: 'cash', label: 'Cash' },
+  { key: 'cheque', label: 'Cheque' },
+  { key: 'internal', label: 'Internal' },
+  { key: 'other', label: 'Other' },
+];
+
+const MANUAL_WITHDRAWAL_METHODS = [
+  { key: 'upi', label: 'UPI' },
+  { key: 'imps', label: 'IMPS' },
+  { key: 'neft', label: 'NEFT' },
+  { key: 'rtgs', label: 'RTGS' },
+  { key: 'bank_transfer', label: 'Bank Transfer' },
+  { key: 'internal', label: 'Internal' },
+  { key: 'other', label: 'Other' },
+];
+
+const getDefaultPaidAt = () => {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+};
 
 const toNumber = (value) => {
   const n = Number(value);
@@ -15,6 +42,19 @@ const formatCurrency = (value) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+
+const formatDateTime = (value) => {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
 
 const mapBalance = (response) => {
   const data = response?.data || response || {};
@@ -85,9 +125,29 @@ const Funds = () => {
   const [loadingClients, setLoadingClients] = useState(true);
   const [loadingBalance, setLoadingBalance] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [manualDepositSaving, setManualDepositSaving] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [note, setNote] = useState('');
+  const [manualDepositForm, setManualDepositForm] = useState({
+    amount: '',
+    method: 'upi',
+    paidAt: getDefaultPaidAt(),
+    reference: '',
+    notes: '',
+  });
+  const [manualWithdrawalForm, setManualWithdrawalForm] = useState({
+    amount: '',
+    method: 'bank_transfer',
+    paidAt: getDefaultPaidAt(),
+    reference: '',
+    notes: '',
+  });
+  const [manualDeposits, setManualDeposits] = useState([]);
+  const [manualWithdrawals, setManualWithdrawals] = useState([]);
+  const [manualDepositsLoading, setManualDepositsLoading] = useState(false);
+  const [manualWithdrawalsLoading, setManualWithdrawalsLoading] = useState(false);
+  const [selectedClientWithdrawable, setSelectedClientWithdrawable] = useState(0);
   const [form, setForm] = useState({
     depositedCash: '',
     intradayAvailable: '',
@@ -146,6 +206,55 @@ const Funds = () => {
     }
   }, []);
 
+  const loadManualDeposits = useCallback(async (clientId) => {
+    if (!clientId) {
+      setManualDeposits([]);
+      return;
+    }
+
+    setManualDepositsLoading(true);
+    try {
+      const response = await brokerApi.getManualDeposits({ customerId: clientId, limit: 15 });
+      setManualDeposits(response?.deposits || []);
+    } catch {
+      setManualDeposits([]);
+    } finally {
+      setManualDepositsLoading(false);
+    }
+  }, []);
+
+  const loadManualWithdrawals = useCallback(async (clientId) => {
+    if (!clientId) {
+      setManualWithdrawals([]);
+      return;
+    }
+
+    setManualWithdrawalsLoading(true);
+    try {
+      const response = await brokerApi.getManualWithdrawals({ customerId: clientId, limit: 15 });
+      setManualWithdrawals(response?.withdrawals || []);
+    } catch {
+      setManualWithdrawals([]);
+    } finally {
+      setManualWithdrawalsLoading(false);
+    }
+  }, []);
+
+  const loadSelectedClientWithdrawable = useCallback(async (clientId) => {
+    if (!clientId) {
+      setSelectedClientWithdrawable(0);
+      return;
+    }
+
+    try {
+      const response = await brokerApi.getWithdrawalEligibility({ customerId: clientId });
+      const row = Array.isArray(response?.clients) ? response.clients[0] : null;
+      setSelectedClientWithdrawable(toNumber(row?.withdrawableNetCash));
+    } catch {
+      setSelectedClientWithdrawable(0);
+    }
+  }, []);
+
   useEffect(() => {
     fetchClients();
   }, [fetchClients]);
@@ -191,7 +300,13 @@ const Funds = () => {
 
   const handleSelectClient = async (client) => {
     setSelectedClient(client);
-    await loadClientFunds(client);
+    const clientId = client.id || client._id;
+    await Promise.all([
+      loadClientFunds(client),
+      loadManualDeposits(clientId),
+      loadManualWithdrawals(clientId),
+      loadSelectedClientWithdrawable(clientId),
+    ]);
   };
 
   const handleFieldChange = (key, value) => {
@@ -212,8 +327,39 @@ const Funds = () => {
       commodityOptionLimitPercentage: String(baseline.commodityOptionLimitPercent),
     });
     setNote('');
+    resetManualDepositForm();
+    resetManualWithdrawalForm();
+    setSelectedClientWithdrawable(0);
     setError(null);
     setSuccess(null);
+  };
+
+  const handleManualDepositFieldChange = (key, value) => {
+    setManualDepositForm((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const resetManualDepositForm = () => {
+    setManualDepositForm({
+      amount: '',
+      method: 'upi',
+      paidAt: getDefaultPaidAt(),
+      reference: '',
+      notes: '',
+    });
+  };
+
+  const handleManualWithdrawalFieldChange = (key, value) => {
+    setManualWithdrawalForm((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const resetManualWithdrawalForm = () => {
+    setManualWithdrawalForm({
+      amount: '',
+      method: 'bank_transfer',
+      paidAt: getDefaultPaidAt(),
+      reference: '',
+      notes: '',
+    });
   };
 
   const handleSave = async () => {
@@ -255,6 +401,83 @@ const Funds = () => {
       setError(err.message || 'Failed to update funds');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleCreateManualDeposit = async () => {
+    if (!selectedClient) {
+      setError('Select a client first.');
+      return;
+    }
+
+    const amount = toNumber(manualDepositForm.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError('Enter a valid manual deposit amount.');
+      return;
+    }
+
+    setManualDepositSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const clientId = selectedClient.id || selectedClient._id;
+      await brokerApi.createManualDeposit(clientId, {
+        amount,
+        method: manualDepositForm.method,
+        paidAt: manualDepositForm.paidAt ? new Date(manualDepositForm.paidAt).toISOString() : undefined,
+        reference: manualDepositForm.reference,
+        notes: manualDepositForm.notes,
+      });
+
+      await loadClientFunds(selectedClient);
+      await loadManualDeposits(clientId);
+      await loadManualWithdrawals(clientId);
+      resetManualDepositForm();
+      setSuccess(`Manual deposit recorded for ${selectedClient.name || clientId}.`);
+    } catch (err) {
+      setError(err.message || 'Failed to record manual deposit');
+    } finally {
+      setManualDepositSaving(false);
+    }
+  };
+
+  const handleCreateManualWithdrawal = async () => {
+    if (!selectedClient) {
+      setError('Select a client first.');
+      return;
+    }
+
+    const amount = toNumber(manualWithdrawalForm.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError('Enter a valid manual withdrawal amount.');
+      return;
+    }
+
+    setManualDepositSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const clientId = selectedClient.id || selectedClient._id;
+      await brokerApi.createManualWithdrawal(clientId, {
+        amount,
+        method: manualWithdrawalForm.method,
+        paidAt: manualWithdrawalForm.paidAt ? new Date(manualWithdrawalForm.paidAt).toISOString() : undefined,
+        reference: manualWithdrawalForm.reference,
+        notes: manualWithdrawalForm.notes,
+      });
+
+      await loadClientFunds(selectedClient);
+      await Promise.all([
+        loadManualDeposits(clientId),
+        loadManualWithdrawals(clientId),
+        loadSelectedClientWithdrawable(clientId),
+      ]);
+      resetManualWithdrawalForm();
+      setSuccess(`Manual withdrawal recorded for ${selectedClient.name || clientId}.`);
+    } catch (err) {
+      setError(err.message || 'Failed to record manual withdrawal');
+    } finally {
+      setManualDepositSaving(false);
     }
   };
 
@@ -352,6 +575,241 @@ const Funds = () => {
             ) : (
               <>
                 <div className="grid grid-cols-1 gap-2.5">
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700">Manual Deposit Entry</p>
+                    <p className="mt-1 text-[11px] text-emerald-800">
+                      Record customer payments received via WhatsApp. This creates a deposit transaction and credits deposited cash.
+                    </p>
+
+                    <div className="mt-2.5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <label className="rounded-lg border border-emerald-200 bg-white p-2.5 sm:col-span-2">
+                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[#617589]">Amount</p>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={manualDepositForm.amount}
+                          onChange={(e) => handleManualDepositFieldChange('amount', e.target.value)}
+                          className="w-full bg-transparent text-base font-bold text-[#111418] outline-none"
+                          placeholder="0.00"
+                        />
+                      </label>
+
+                      <label className="rounded-lg border border-emerald-200 bg-white p-2.5">
+                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[#617589]">Method</p>
+                        <select
+                          value={manualDepositForm.method}
+                          onChange={(e) => handleManualDepositFieldChange('method', e.target.value)}
+                          className="w-full bg-transparent text-sm font-semibold text-[#111418] outline-none"
+                        >
+                          {MANUAL_DEPOSIT_METHODS.map((method) => (
+                            <option key={method.key} value={method.key}>{method.label}</option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="rounded-lg border border-emerald-200 bg-white p-2.5">
+                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[#617589]">Paid At</p>
+                        <input
+                          type="datetime-local"
+                          value={manualDepositForm.paidAt}
+                          onChange={(e) => handleManualDepositFieldChange('paidAt', e.target.value)}
+                          className="w-full bg-transparent text-sm font-semibold text-[#111418] outline-none"
+                        />
+                      </label>
+
+                      <label className="rounded-lg border border-emerald-200 bg-white p-2.5 sm:col-span-2">
+                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[#617589]">Reference (optional)</p>
+                        <input
+                          type="text"
+                          value={manualDepositForm.reference}
+                          onChange={(e) => handleManualDepositFieldChange('reference', e.target.value)}
+                          className="w-full bg-transparent text-sm text-[#111418] outline-none"
+                          placeholder="UTR / transfer reference"
+                        />
+                      </label>
+
+                      <label className="rounded-lg border border-emerald-200 bg-white p-2.5 sm:col-span-2">
+                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[#617589]">Notes (optional)</p>
+                        <textarea
+                          rows={2}
+                          value={manualDepositForm.notes}
+                          onChange={(e) => handleManualDepositFieldChange('notes', e.target.value)}
+                          className="w-full resize-none bg-transparent text-sm text-[#111418] outline-none"
+                          placeholder="Context for this deposit entry"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="mt-2.5 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={resetManualDepositForm}
+                        disabled={manualDepositSaving}
+                        className="h-10 flex-1 rounded-lg border border-emerald-200 bg-white text-sm font-semibold text-[#111418] disabled:opacity-60"
+                      >
+                        Reset
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCreateManualDeposit}
+                        disabled={manualDepositSaving}
+                        className="h-10 flex-[2] rounded-lg bg-emerald-600 text-sm font-bold text-white disabled:opacity-60"
+                      >
+                        {manualDepositSaving ? 'Recording...' : 'Record Deposit'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-gray-200 bg-white p-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Recent Manual Deposits</p>
+                    {manualDepositsLoading ? (
+                      <div className="mt-2 space-y-2 animate-pulse">
+                        <div className="h-10 rounded bg-gray-100" />
+                        <div className="h-10 rounded bg-gray-100" />
+                      </div>
+                    ) : manualDeposits.length === 0 ? (
+                      <p className="mt-2 text-xs text-[#617589]">No manual deposit entries found.</p>
+                    ) : (
+                      <div className="mt-2 space-y-2">
+                        {manualDeposits.slice(0, 5).map((entry) => (
+                          <div key={entry.id || `${entry.paidAt}-${entry.amount}`} className="rounded-lg border border-gray-200 bg-[#f8fafc] px-2.5 py-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-sm font-bold text-[#111418]">{formatCurrency(entry.amount)}</p>
+                              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                                {entry.methodLabel || 'Manual'}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-[11px] text-[#617589]">
+                              {formatDateTime(entry.paidAt)}
+                              {entry.reference ? ` • Ref: ${entry.reference}` : ''}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-xl border border-red-200 bg-red-50/40 p-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-red-700">Manual Withdrawal Entry</p>
+                    <p className="mt-1 text-[11px] text-red-700">
+                      Record completed payout entries. Amount is debited from withdrawable net cash only.
+                    </p>
+
+                    <div className="mt-2 rounded-lg border border-red-200 bg-white px-2.5 py-2">
+                      <p className="text-[10px] uppercase tracking-wide text-[#617589]">Withdrawable Net Cash</p>
+                      <p className="text-[14px] font-bold text-[#111418] mt-0.5">{formatCurrency(selectedClientWithdrawable)}</p>
+                    </div>
+
+                    <div className="mt-2.5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <label className="rounded-lg border border-red-200 bg-white p-2.5 sm:col-span-2">
+                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[#617589]">Amount</p>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={manualWithdrawalForm.amount}
+                          onChange={(e) => handleManualWithdrawalFieldChange('amount', e.target.value)}
+                          className="w-full bg-transparent text-base font-bold text-[#111418] outline-none"
+                          placeholder="0.00"
+                        />
+                      </label>
+
+                      <label className="rounded-lg border border-red-200 bg-white p-2.5">
+                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[#617589]">Method</p>
+                        <select
+                          value={manualWithdrawalForm.method}
+                          onChange={(e) => handleManualWithdrawalFieldChange('method', e.target.value)}
+                          className="w-full bg-transparent text-sm font-semibold text-[#111418] outline-none"
+                        >
+                          {MANUAL_WITHDRAWAL_METHODS.map((method) => (
+                            <option key={method.key} value={method.key}>{method.label}</option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="rounded-lg border border-red-200 bg-white p-2.5">
+                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[#617589]">Paid At</p>
+                        <input
+                          type="datetime-local"
+                          value={manualWithdrawalForm.paidAt}
+                          onChange={(e) => handleManualWithdrawalFieldChange('paidAt', e.target.value)}
+                          className="w-full bg-transparent text-sm font-semibold text-[#111418] outline-none"
+                        />
+                      </label>
+
+                      <label className="rounded-lg border border-red-200 bg-white p-2.5 sm:col-span-2">
+                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[#617589]">Reference (optional)</p>
+                        <input
+                          type="text"
+                          value={manualWithdrawalForm.reference}
+                          onChange={(e) => handleManualWithdrawalFieldChange('reference', e.target.value)}
+                          className="w-full bg-transparent text-sm text-[#111418] outline-none"
+                          placeholder="Payout / transfer reference"
+                        />
+                      </label>
+
+                      <label className="rounded-lg border border-red-200 bg-white p-2.5 sm:col-span-2">
+                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[#617589]">Notes (optional)</p>
+                        <textarea
+                          rows={2}
+                          value={manualWithdrawalForm.notes}
+                          onChange={(e) => handleManualWithdrawalFieldChange('notes', e.target.value)}
+                          className="w-full resize-none bg-transparent text-sm text-[#111418] outline-none"
+                          placeholder="Context for this withdrawal entry"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="mt-2.5 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={resetManualWithdrawalForm}
+                        disabled={manualDepositSaving}
+                        className="h-10 flex-1 rounded-lg border border-red-200 bg-white text-sm font-semibold text-[#111418] disabled:opacity-60"
+                      >
+                        Reset
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCreateManualWithdrawal}
+                        disabled={manualDepositSaving}
+                        className="h-10 flex-[2] rounded-lg bg-red-600 text-sm font-bold text-white disabled:opacity-60"
+                      >
+                        {manualDepositSaving ? 'Recording...' : 'Record Withdrawal'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-gray-200 bg-white p-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Recent Manual Withdrawals</p>
+                    {manualWithdrawalsLoading ? (
+                      <div className="mt-2 space-y-2 animate-pulse">
+                        <div className="h-10 rounded bg-gray-100" />
+                        <div className="h-10 rounded bg-gray-100" />
+                      </div>
+                    ) : manualWithdrawals.length === 0 ? (
+                      <p className="mt-2 text-xs text-[#617589]">No manual withdrawal entries found.</p>
+                    ) : (
+                      <div className="mt-2 space-y-2">
+                        {manualWithdrawals.slice(0, 5).map((entry) => (
+                          <div key={entry.id || `${entry.paidAt}-${entry.amount}`} className="rounded-lg border border-gray-200 bg-[#f8fafc] px-2.5 py-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-sm font-bold text-[#111418]">{formatCurrency(entry.amount)}</p>
+                              <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700">
+                                {entry.methodLabel || 'Withdrawal'}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-[11px] text-[#617589]">
+                              {formatDateTime(entry.paidAt)}
+                              {entry.reference ? ` • Ref: ${entry.reference}` : ''}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   <label className="rounded-xl border border-gray-200 p-3">
                     <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#617589]">Deposited Cash</p>
                     <input
@@ -507,14 +965,22 @@ const Funds = () => {
                 <div className="mt-4 flex gap-2.5">
                   <button
                     onClick={handleReset}
-                    disabled={!hasChanges || saving}
+                    disabled={(
+                      !hasChanges
+                      && !manualDepositForm.amount
+                      && !manualDepositForm.reference
+                      && !manualDepositForm.notes
+                      && !manualWithdrawalForm.amount
+                      && !manualWithdrawalForm.reference
+                      && !manualWithdrawalForm.notes
+                    ) || saving || manualDepositSaving}
                     className="h-11 flex-1 rounded-xl border border-gray-300 bg-white text-sm font-bold text-[#111418] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Reset
                   </button>
                   <button
                     onClick={handleSave}
-                    disabled={!hasChanges || saving}
+                    disabled={!hasChanges || saving || manualDepositSaving}
                     className="h-11 flex-[2] rounded-xl bg-[#137fec] text-sm font-bold text-white shadow-lg shadow-blue-500/20 disabled:cursor-not-allowed disabled:bg-gray-300"
                   >
                     {saving ? 'Saving...' : 'Save Funds'}

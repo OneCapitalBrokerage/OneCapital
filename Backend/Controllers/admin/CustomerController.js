@@ -9,6 +9,7 @@ import FundTransactionModel from '../../Model/FundManagement/FundTransactionMode
 import PaymentProofModel from '../../Model/FundManagement/PaymentProofModel.js';
 import WithdrawalRequestModel from '../../Model/FundManagement/WithdrawalRequestModel.js';
 import OrderModel from '../../Model/Trading/OrdersModel.js';
+import { writeAuditSuccess } from '../../Utils/AuditLogger.js';
 
 // Helper: find customer by customer_id string OR mongo _id
 const findCustomer = async (id, select = '-password') => {
@@ -627,6 +628,36 @@ const clearStatement = asyncHandler(async (req, res) => {
   console.log(
     `[Admin] ${adminId} cleared statement for customer ${customerIdStr} — embedded=${embeddedTransactionCount}, legacy=${legacyDeletedCount}, paymentProofs=${paymentProofsDeletedCount}, withdrawals=${withdrawalsDeletedCount}`
   );
+
+  await writeAuditSuccess({
+    req,
+    type: 'transaction',
+    eventType: 'CUSTOMER_STATEMENT_CLEAR',
+    category: 'admin',
+    message: `Admin cleared statement for customer ${customerIdStr}.`,
+    target: {
+      type: 'customer',
+      id: customer._id,
+      id_str: customerIdStr,
+    },
+    entity: {
+      type: 'customer_statement',
+      ref: customerIdStr,
+    },
+    customer: {
+      customer_id: customer._id,
+      customer_id_str: customerIdStr,
+    },
+    metadata: {
+      embeddedClearedCount: embeddedTransactionCount,
+      legacyDeletedCount,
+      paymentProofsDeletedCount,
+      withdrawalsDeletedCount,
+      totalCleared,
+      brokerIdStr: stringBrokerId || null,
+    },
+    note: 'Statement clear operation deletes ledger/history rows and can affect reconciliation if not backfilled.',
+  });
 
   res.status(200).json({
     success: true,

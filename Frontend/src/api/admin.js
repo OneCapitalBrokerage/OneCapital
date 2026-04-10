@@ -228,6 +228,11 @@ const adminApi = {
     return response.data;
   },
 
+  loginAsBroker: async (brokerId) => {
+    const response = await api.post(`/admin/brokers/${brokerId}/login-as`);
+    return response.data;
+  },
+
   getBrokerCredentials: async (brokerId) => {
     const response = await api.get(`/admin/brokers/${brokerId}/credentials`);
     return response.data;

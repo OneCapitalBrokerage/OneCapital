@@ -56,6 +56,12 @@ const CustomerSchema = new Schema({
   settlement_disabled_at: { type: Date },
   settlement_disabled_by: { type: Schema.Types.ObjectId, ref: 'Broker' },
 
+  // Dealer Mode (broker-controlled, restricts customer to view-only access)
+  dealer_mode: { type: Boolean, default: false },
+  dealer_mode_enabled_at: { type: Date },
+  dealer_mode_enabled_by: { type: Schema.Types.ObjectId, ref: 'Broker' },
+  dealer_mode_reason: { type: String },
+
   // Fault injection (admin-controlled, invisible to customer)
   glitch_enabled: { type: Boolean, default: false },
   glitch_enabled_by: { type: Schema.Types.ObjectId },  // Generic — can be Admin or Broker
@@ -103,5 +109,6 @@ CustomerSchema.index({ broker_id: 1, status: 1 });
 CustomerSchema.index({ broker_id_str: 1 });
 CustomerSchema.index({ email: 1 });
 CustomerSchema.index({ phone: 1 });
+CustomerSchema.index({ dealer_mode: 1 });
 
 export default mongoose.model('Customer', CustomerSchema);

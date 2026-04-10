@@ -2,6 +2,7 @@
 // Admin Broker Management - CRUD operations for brokers
 
 import asyncHandler from 'express-async-handler';
+import jwt from 'jsonwebtoken';
 import BrokerModel from '../../Model/Auth/BrokerModel.js';
 import BankAccountModel from '../../Model/Auth/BankAccountModel.js';
 import CustomerModel from '../../Model/Auth/CustomerModel.js';
@@ -22,6 +23,7 @@ import OrderModel from '../../Model/Trading/OrdersModel.js';
 import PositionModel from '../../Model/Trading/PositionsModel.js';
 import WatchlistModel from '../../Model/Trading/WatchListModel.js';
 import UserWatchlistModel from '../../Model/UserWatchlistModel.js';
+import { writeAuditSuccess } from '../../Utils/AuditLogger.js';
 
 // Helper: find broker by broker_id string OR mongo _id
 const findBroker = async (id, select = '-password') => {
@@ -41,6 +43,28 @@ const buildOrQuery = (clauses = []) => {
 };
 
 const uniqueStrings = (values = []) => [...new Set(values.filter(Boolean).map((value) => String(value)))];
+
+const createBrokerAccessToken = (broker) =>
+  jwt.sign(
+    {
+      id: broker._id,
+      role: 'broker',
+      stringBrokerId: broker.broker_id || broker.login_id || String(broker._id),
+      mongoBrokerId: broker._id,
+    },
+    process.env.JWT_SECRET || 'dev-secret',
+    { expiresIn: '30d' }
+  );
+
+const createBrokerRefreshToken = (broker) =>
+  jwt.sign(
+    {
+      id: broker._id,
+      role: 'broker',
+    },
+    process.env.JWT_SECRET || 'dev-secret',
+    { expiresIn: '60d' }
+  );
 
 /**
  * @desc     Get all brokers
@@ -653,6 +677,77 @@ const getBrokerCredentials = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * @desc     Login as broker (direct broker session)
+ * @route    POST /api/admin/brokers/:id/login-as
+ * @access   Private (Admin only)
+ */
+const loginAsBroker = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const adminId = req.user?._id;
+  const adminIdStr = req.user?.admin_id || String(adminId || '');
+
+  const broker = await findBroker(id, undefined);
+  if (!broker) {
+    return res.status(404).json({ success: false, message: 'Broker not found.' });
+  }
+
+  const brokerStatus = String(broker.status || 'active').toLowerCase();
+  if (['blocked', 'suspended', 'inactive'].includes(brokerStatus)) {
+    return res.status(403).json({
+      success: false,
+      message: 'Selected broker account is not eligible for login.',
+    });
+  }
+
+  const accessToken = createBrokerAccessToken(broker);
+  const refreshToken = createBrokerRefreshToken(broker);
+  const brokerIdStr = broker.broker_id || broker.login_id || String(broker._id);
+
+  await writeAuditSuccess({
+    req,
+    type: 'security',
+    severity: 'info',
+    eventType: 'ADMIN_BROKER_DIRECT_LOGIN',
+    category: 'authentication',
+    message: `Admin ${adminIdStr} switched into broker ${brokerIdStr} session.`,
+    metadata: {
+      switchMode: 'direct_broker_session',
+      switchedSession: true,
+    },
+    target: {
+      type: 'broker',
+      id: broker._id,
+      id_str: brokerIdStr,
+    },
+    broker: {
+      broker_id: broker._id,
+      broker_id_str: brokerIdStr,
+    },
+  });
+
+  console.log(`[Admin] ${adminIdStr} switched into broker ${brokerIdStr} session`);
+
+  return res.status(200).json({
+    success: true,
+    message: 'Broker session generated successfully.',
+    token: accessToken,
+    accessToken,
+    refreshToken,
+    broker: {
+      id: brokerIdStr,
+      broker_id: brokerIdStr,
+      name: broker.name,
+      email: broker.email || null,
+      phone: broker.phone || null,
+      status: broker.status || 'active',
+      ownerName: broker.owner_name || broker.name,
+      companyName: broker.company_name || null,
+    },
+    expiresIn: '30 days',
+  });
+});
+
 export {
   getAllBrokers,
   getBrokerById,
@@ -664,4 +759,5 @@ export {
   unblockBroker,
   getBrokerCompliance,
   getBrokerCredentials,
+  loginAsBroker,
 };

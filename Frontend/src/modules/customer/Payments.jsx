@@ -7,6 +7,13 @@ import {
   PAYMENT_METHOD_LABELS,
   hasBankTransferDetails,
 } from '../../utils/paymentIntake';
+import {
+  formatSignedTransactionAmount,
+  formatTransactionDateTime,
+  getStatusMeta,
+  getTransactionVisualMeta,
+  normalizeUiTransaction,
+} from '../../utils/transactionFormatters';
 
 const ADD_STATUS_META = {
   pending_proof: { label: 'Pending', className: 'bg-amber-50 dark:bg-amber-900/20 text-amber-700' }, // Legacy status
@@ -53,9 +60,18 @@ const Payments = () => {
 
   const [addFundRequests, setAddFundRequests] = useState([]);
   const [withdrawalRequests, setWithdrawalRequests] = useState([]);
+  const [manualDeposits, setManualDeposits] = useState([]);
+  const [manualWithdrawals, setManualWithdrawals] = useState([]);
   const [paymentInfo, setPaymentInfo] = useState(null);
   const [showQr, setShowQr] = useState(false);
   const [copiedField, setCopiedField] = useState('');
+
+  const resolveManualMethodLabel = (tx) => {
+    const methodKey = String(tx?.method || '').trim().toLowerCase();
+    if (methodKey && PAYMENT_METHOD_LABELS[methodKey]) return PAYMENT_METHOD_LABELS[methodKey];
+    const candidate = String(tx?.methodLabel || tx?.subtitle || '').trim();
+    return candidate || 'Funds Credit';
+  };
 
   const handleCopy = async (value, fieldName) => {
     if (!value) return;
@@ -105,9 +121,26 @@ const Payments = () => {
         customerApi.getPaymentInfo().catch(() => null),
       ]);
 
+      const fundHistoryRes = await customerApi.getFundHistory({
+        ui: true,
+        includeRequests: true,
+        category: 'payment',
+        limit: 100,
+      }).catch(() => ({ transactions: [] }));
+
       setAddFundRequests(paymentsRes.payments || []);
       setWithdrawalRequests(withdrawalsRes.withdrawals || []);
       setPaymentInfo(paymentInfoRes?.paymentInfo || null);
+      setManualDeposits(
+        (fundHistoryRes?.transactions || [])
+          .map((tx) => normalizeUiTransaction(tx))
+          .filter((tx) => tx.rawType === 'manual_deposit')
+      );
+      setManualWithdrawals(
+        (fundHistoryRes?.transactions || [])
+          .map((tx) => normalizeUiTransaction(tx))
+          .filter((tx) => tx.rawType === 'manual_withdrawal')
+      );
     } catch (err) {
       setError(err?.response?.data?.message || 'Failed to load payment records.');
     } finally {
@@ -123,6 +156,46 @@ const Payments = () => {
     () => addFundRequests.filter((r) => r.status === 'pending_proof' || r.status === 'pending').length,
     [addFundRequests]
   );
+
+  const combinedFundsRows = useMemo(() => {
+    const requestRows = addFundRequests.map((request) => ({
+      source: 'request',
+      id: `request-${request.id}`,
+      createdAt: request.createdAt,
+      request,
+    }));
+
+    const manualRows = manualDeposits.map((tx, index) => ({
+      source: 'manual',
+      id: `manual-${tx.id || index}`,
+      createdAt: tx.timestamp,
+      tx,
+    }));
+
+    return [...requestRows, ...manualRows].sort(
+      (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+    );
+  }, [addFundRequests, manualDeposits]);
+
+  const combinedWithdrawalRows = useMemo(() => {
+    const requestRows = withdrawalRequests.map((request) => ({
+      source: 'request',
+      id: `request-${request.id}`,
+      createdAt: request.createdAt,
+      request,
+    }));
+
+    const manualRows = manualWithdrawals.map((tx, index) => ({
+      source: 'manual',
+      id: `manual-${tx.id || index}`,
+      createdAt: tx.timestamp,
+      tx,
+    }));
+
+    return [...requestRows, ...manualRows].sort(
+      (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+    );
+  }, [withdrawalRequests, manualWithdrawals]);
   const bankTransferReady = hasBankTransferDetails(paymentInfo?.bankTransferDetails);
 
   return (
@@ -215,20 +288,59 @@ const Payments = () => {
             ))}
           </div>
         ) : activeTab === 'add' ? (
-          addFundRequests.length === 0 ? (
+          combinedFundsRows.length === 0 ? (
             <div className="bg-white dark:bg-[#111b17] rounded-xl border border-gray-200 dark:border-[#22352d] p-8 text-center">
               <span className="material-symbols-outlined text-gray-300 dark:text-[#22352d] text-4xl">receipt_long</span>
-              <p className="text-sm text-[#617589] dark:text-[#9cb7aa] mt-2">No fund requests found.</p>
+              <p className="text-sm text-[#617589] dark:text-[#9cb7aa] mt-2">No fund entries found.</p>
             </div>
           ) : (
             <div className="space-y-3">
-              {addFundRequests.map((request) => {
+              {combinedFundsRows.map((row) => {
+                if (row.source === 'manual') {
+                  const tx = row.tx;
+                  const visual = getTransactionVisualMeta(tx);
+                  const statusMeta = getStatusMeta(tx.status);
+                  const methodLabel = resolveManualMethodLabel(tx);
+                  return (
+                    <div
+                      key={row.id}
+                      className="bg-white dark:bg-[#111b17] rounded-xl border border-gray-200 dark:border-[#22352d] shadow-sm p-3.5"
+                    >
+                      <div className="flex justify-between items-start gap-3">
+                        <div>
+                          <p className="text-[#111418] dark:text-[#e8f3ee] text-base font-bold">
+                            {formatCurrency(tx.amount)}
+                          </p>
+                          <p className="text-[11px] text-[#617589] dark:text-[#9cb7aa] mt-0.5">
+                            {formatTransactionDateTime(tx.timestamp)}
+                          </p>
+                          <p className="text-[10px] text-[#137fec] dark:text-[#8cc1ff] mt-1 font-semibold">
+                            {methodLabel}
+                          </p>
+                          {tx.reference && (
+                            <p className="text-[10px] text-[#617589] dark:text-[#9cb7aa] mt-1 font-mono">{tx.reference}</p>
+                          )}
+                        </div>
+                        <div className="flex flex-col items-end gap-1">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${statusMeta.className}`}>
+                            Approved
+                          </span>
+                          <p className={`text-[12px] font-bold ${visual.amountClass}`}>
+                            {formatSignedTransactionAmount(tx)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
+                const request = row.request;
                 const statusMeta = ADD_STATUS_META[request.status] || ADD_STATUS_META.pending;
                 const highlight = request.id === highlightedRequestId;
 
                 return (
                   <div
-                    key={request.id}
+                    key={row.id}
                     className={`bg-white dark:bg-[#111b17] rounded-xl border shadow-sm p-3.5 ${
                       highlight ? 'border-[#137fec]' : 'border-gray-200 dark:border-[#22352d]'
                     }`}
@@ -262,17 +374,47 @@ const Payments = () => {
               })}
             </div>
           )
-        ) : withdrawalRequests.length === 0 ? (
+        ) : combinedWithdrawalRows.length === 0 ? (
           <div className="bg-white dark:bg-[#111b17] rounded-xl border border-gray-200 dark:border-[#22352d] p-8 text-center">
             <span className="material-symbols-outlined text-gray-300 dark:text-[#22352d] text-4xl">payments</span>
             <p className="text-sm text-[#617589] dark:text-[#9cb7aa] mt-2">No withdrawal requests found.</p>
           </div>
         ) : (
           <div className="space-y-3">
-            {withdrawalRequests.map((request) => {
+            {combinedWithdrawalRows.map((row) => {
+              if (row.source === 'manual') {
+                const tx = row.tx;
+                const visual = getTransactionVisualMeta(tx);
+                const statusMeta = getStatusMeta(tx.status);
+                const methodLabel = resolveManualMethodLabel(tx);
+                return (
+                  <div key={row.id} className="bg-white dark:bg-[#111b17] rounded-xl border border-gray-200 dark:border-[#22352d] shadow-sm p-3.5">
+                    <div className="flex justify-between items-start gap-3">
+                      <div>
+                        <p className="text-[#111418] dark:text-[#e8f3ee] text-base font-bold">{formatCurrency(tx.amount)}</p>
+                        <p className="text-[11px] text-[#617589] dark:text-[#9cb7aa] mt-0.5">{formatTransactionDateTime(tx.timestamp)}</p>
+                        <p className="text-[10px] text-[#137fec] dark:text-[#8cc1ff] mt-1 font-semibold">{methodLabel}</p>
+                        {tx.reference && (
+                          <p className="text-[10px] text-[#617589] dark:text-[#9cb7aa] mt-1 font-mono">{tx.reference}</p>
+                        )}
+                      </div>
+                      <div className="flex flex-col items-end gap-1">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${statusMeta.className}`}>
+                          Completed
+                        </span>
+                        <p className={`text-[12px] font-bold ${visual.amountClass}`}>
+                          {formatSignedTransactionAmount(tx)}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+
+              const request = row.request;
               const statusMeta = WD_STATUS_META[request.status] || WD_STATUS_META.pending;
               return (
-                <div key={request.id} className="bg-white dark:bg-[#111b17] rounded-xl border border-gray-200 dark:border-[#22352d] shadow-sm p-3.5">
+                <div key={row.id} className="bg-white dark:bg-[#111b17] rounded-xl border border-gray-200 dark:border-[#22352d] shadow-sm p-3.5">
                   <div className="flex justify-between items-start gap-3">
                     <div>
                       <p className="text-[#111418] dark:text-[#e8f3ee] text-base font-bold">{formatCurrency(request.amount)}</p>

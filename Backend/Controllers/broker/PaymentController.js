@@ -6,6 +6,10 @@ import CustomerModel from '../../Model/Auth/CustomerModel.js';
 import FundModel from '../../Model/FundManagement/FundModel.js';
 import PaymentProofModel from '../../Model/FundManagement/PaymentProofModel.js';
 import { writeAuditSuccess } from '../../Utils/AuditLogger.js';
+import {
+  assertDepositOnlyMutation,
+  snapshotFundBalanceAxes,
+} from '../../Utils/fundBalanceInvariants.js';
 
 const toNumber = (value) => {
   const n = Number(value);
@@ -193,6 +197,7 @@ const verifyPayment = asyncHandler(async (req, res) => {
   // This naturally handles negative balance scenarios:
   // e.g. -500 + 1000 = 500
   const fund = await findOrCreateFundForPayment(payment, brokerIdStr);
+  const beforeAxes = snapshotFundBalanceAxes(fund);
   const previousBalance = toNumber(
     fund.net_available_balance ?? fund.available_balance
   );
@@ -209,6 +214,12 @@ const verifyPayment = asyncHandler(async (req, res) => {
     reference: transactionRef || payment.payment_reference || '',
     verifiedBy: brokerId,
     timestamp: new Date(),
+  });
+  const afterAxes = snapshotFundBalanceAxes(fund);
+  assertDepositOnlyMutation({
+    before: beforeAxes,
+    after: afterAxes,
+    context: 'PaymentController.verifyPayment',
   });
   await fund.save();
 

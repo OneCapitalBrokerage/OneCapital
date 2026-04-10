@@ -74,6 +74,11 @@ const brokerApi = {
     return response.data;
   },
 
+  toggleDealerMode: async (clientId, enabled, reason) => {
+    const response = await api.put(`/broker/clients/${clientId}/dealer-mode`, { enabled, reason });
+    return response.data;
+  },
+
   toggleOrderExitAllowed: async (clientId, orderId, allowed) => {
     const response = await api.put(`/broker/clients/${clientId}/orders/${orderId}/exit-toggle`, { allowed });
     return response.data;
@@ -183,6 +188,36 @@ const brokerApi = {
 
   updateClientFunds: async (clientId, fundData) => {
     const response = await api.put(`/broker/clients/${clientId}/funds`, fundData);
+    return response.data;
+  },
+
+  createManualDeposit: async (clientId, payload) => {
+    const response = await api.post(`/broker/clients/${clientId}/manual-deposits`, payload);
+    return response.data;
+  },
+
+  getManualDeposits: async (params = {}) => {
+    const response = await api.get('/broker/manual-deposits', { params });
+    return response.data;
+  },
+
+  createManualWithdrawal: async (clientId, payload) => {
+    const response = await api.post(`/broker/clients/${clientId}/manual-withdrawals`, payload);
+    return response.data;
+  },
+
+  getManualWithdrawals: async (params = {}) => {
+    const response = await api.get('/broker/manual-withdrawals', { params });
+    return response.data;
+  },
+
+  getManualWithdrawalStats: async () => {
+    const response = await api.get('/broker/manual-withdrawals/stats');
+    return response.data;
+  },
+
+  getWithdrawalEligibility: async (params = {}) => {
+    const response = await api.get('/broker/withdrawals/eligibility', { params });
     return response.data;
   },
 

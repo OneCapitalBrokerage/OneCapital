@@ -170,7 +170,7 @@ const isGenericManualFundNote = (note) => {
 };
 
 const evaluateManualFundRules = async (event) => {
-  if (!['FUND_MANUAL_EDIT', 'FUND_MANUAL_ADD'].includes(event.event_type)) return [];
+  if (!['FUND_MANUAL_EDIT', 'FUND_MANUAL_ADD', 'FUND_MANUAL_DEPOSIT_CREATE', 'WITHDRAWAL_MANUAL_ENTRY_CREATE', 'FUND_REALIZED_LEDGER_BACKFILL'].includes(event.event_type)) return [];
 
   const alerts = [];
   const amountAbs = Math.abs(Number(event.amount_delta || 0));
@@ -214,7 +214,7 @@ const evaluateManualFundRules = async (event) => {
     const burstCount = await AuditEventModel.countDocuments({
       createdAt: { $gte: windowStart },
       actor_id_str: event.actor_id_str,
-      event_type: { $in: ['FUND_MANUAL_EDIT', 'FUND_MANUAL_ADD'] },
+      event_type: { $in: ['FUND_MANUAL_EDIT', 'FUND_MANUAL_ADD', 'FUND_MANUAL_DEPOSIT_CREATE', 'WITHDRAWAL_MANUAL_ENTRY_CREATE', 'FUND_REALIZED_LEDGER_BACKFILL'] },
     });
 
     if (burstCount >= THRESHOLDS.fundEditBurstCount) {

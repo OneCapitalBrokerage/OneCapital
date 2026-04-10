@@ -221,6 +221,11 @@ const ClientList = () => {
                               Admin Suspended
                             </span>
                           )}
+                          {client.dealerMode && (
+                            <span className="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded uppercase bg-purple-100 text-purple-700">
+                              Dealer Mode
+                            </span>
+                          )}
                           {client.status !== 'blocked' && !client.tradingEnabled && (
                             <span className="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded uppercase bg-orange-100 text-orange-700">
                               No Trading

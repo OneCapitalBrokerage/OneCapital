@@ -57,6 +57,8 @@ const humanizeToken = (value) => toTitleCase(String(value || '').replace(/[_-]+/
 
 const ACTION_LABELS = {
   FUND_MANUAL_ADD: 'Manual Funds Added',
+  FUND_MANUAL_DEPOSIT_CREATE: 'Funds Credited',
+  FUND_REALIZED_LEDGER_BACKFILL: 'Realized Ledger Backfilled',
   FUND_MANUAL_EDIT: 'Manual Funds Updated',
   MARGIN_LIMIT_UPDATE: 'Margin Limits Updated',
   OPTION_LIMIT_PERCENT_UPDATE: 'Option Limit Updated',
@@ -70,8 +72,10 @@ const ACTION_LABELS = {
   WEEKLY_SETTLEMENT_RUN: 'Weekly Settlement Completed',
   WEEKLY_SETTLEMENT_PARTIAL_FAILURE: 'Weekly Settlement Partial Failure',
   AUTO_WEEKLY_SETTLEMENT_CRON: 'Auto Weekly Settlement Cron',
+  CUSTOMER_STATEMENT_CLEAR: 'Customer Statement Cleared',
   WITHDRAWAL_REQUEST_CREATE: 'Withdrawal Requested',
   WITHDRAWAL_APPROVE: 'Withdrawal Approved',
+  WITHDRAWAL_MANUAL_ENTRY_CREATE: 'Withdrawal Recorded',
   WITHDRAWAL_REJECT: 'Withdrawal Rejected',
 };
 

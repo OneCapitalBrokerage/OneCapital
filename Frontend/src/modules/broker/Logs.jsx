@@ -7,6 +7,8 @@ const activityFilters = [
   { key: 'order', label: 'Orders' },
   { key: 'order_modify', label: 'Modified' },
   { key: 'payment', label: 'Payments' },
+  { key: 'manual_deposit', label: 'Manual Deposits' },
+  { key: 'manual_withdrawal', label: 'Manual Withdrawals' },
   { key: 'client_joined', label: 'Clients' },
 ];
 
@@ -18,6 +20,10 @@ const getActivityIcon = (type) => {
       return 'edit_note';
     case 'payment':
       return 'payments';
+    case 'manual_deposit':
+      return 'account_balance_wallet';
+    case 'manual_withdrawal':
+      return 'outbox';
     case 'client_joined':
       return 'person_add';
     default:
@@ -33,6 +39,10 @@ const getActivityColors = (type) => {
       return { bg: 'bg-purple-50', text: 'text-purple-600' };
     case 'payment':
       return { bg: 'bg-amber-50', text: 'text-amber-600' };
+    case 'manual_deposit':
+      return { bg: 'bg-emerald-50', text: 'text-emerald-600' };
+    case 'manual_withdrawal':
+      return { bg: 'bg-red-50', text: 'text-red-600' };
     case 'client_joined':
       return { bg: 'bg-green-50', text: 'text-green-600' };
     default:

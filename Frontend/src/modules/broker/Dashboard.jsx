@@ -32,6 +32,7 @@ const Dashboard = () => {
       cncPending: 0,
       withdrawalPending: 0,
       paymentPending: 0,
+      manualDepositCount: 0,
     },
   });
 
@@ -75,6 +76,7 @@ const Dashboard = () => {
             cncPending,
             withdrawalPending,
             paymentPending,
+            manualDepositCount: toCount(approvals.manualDepositCount),
           },
         });
       }
@@ -179,6 +181,10 @@ const Dashboard = () => {
     .filter(([, count]) => count > 0)
     .map(([label, count]) => `${label}: ${count}`)
     .join(' • ');
+
+  const manualDepositLabel = stats.approvalBreakdown.manualDepositCount > 0
+    ? `${stats.approvalBreakdown.manualDepositCount} manual deposits recorded`
+    : 'No manual deposits recorded yet';
 
   return (
     <div className="flex flex-col min-h-screen bg-[#f6f7f8] pb-20">
@@ -314,6 +320,7 @@ const Dashboard = () => {
                     {stats.pendingApprovals} total pending actions
                     {pendingBreakdownText ? ` (${pendingBreakdownText})` : ''}
                   </p>
+                  <p className="text-[#617589] text-[11px] mt-0.5">{manualDepositLabel}</p>
                 </div>
               </div>
               <span className="material-symbols-outlined text-gray-400 text-[20px]">chevron_right</span>

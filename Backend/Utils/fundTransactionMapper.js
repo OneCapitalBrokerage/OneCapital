@@ -3,6 +3,17 @@ const TRADING_TYPES = new Set(['realized_profit', 'realized_loss']);
 const ADJUSTMENT_TYPES = new Set(['adjustment']);
 const VALID_CATEGORIES = new Set(['all', 'payment', 'trading', 'margin', 'adjustment']);
 const PAYMENT_CONTEXT_KEYWORDS = ['payment', 'fund', 'deposit', 'withdraw', 'payout', 'bank'];
+const MANUAL_METHOD_LABELS = {
+  upi: 'UPI',
+  imps: 'IMPS',
+  neft: 'NEFT',
+  rtgs: 'RTGS',
+  bank_transfer: 'Bank Transfer',
+  cash: 'Cash',
+  cheque: 'Cheque',
+  internal: 'Internal',
+  other: 'Other',
+};
 
 const toNumber = (value) => {
   const n = Number(value);
@@ -21,6 +32,68 @@ const hasPaymentContext = (tx) => {
   const notes = toLower(tx?.notes || tx?.description || '');
   if (!notes) return false;
   return PAYMENT_CONTEXT_KEYWORDS.some((keyword) => notes.includes(keyword));
+};
+
+const isManualDepositTransaction = (tx) => {
+  const rawType = toLower(tx?.type);
+  if (rawType !== 'credit') return false;
+  const notes = toLower(tx?.notes || tx?.description || '');
+  return (
+    notes.includes('manual deposit recorded')
+    || notes.includes('manual deposit entry')
+    || notes.includes('funds credited')
+  );
+};
+
+const isManualWithdrawalTransaction = (tx) => {
+  const rawType = toLower(tx?.type);
+  if (rawType !== 'withdrawal') return false;
+  const notes = toLower(tx?.notes || tx?.description || '');
+  return notes.includes('withdrawal entry');
+};
+
+const normalizeMethodKey = (value) => {
+  const normalized = toLower(value).replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  if (!normalized) return 'other';
+  return Object.prototype.hasOwnProperty.call(MANUAL_METHOD_LABELS, normalized)
+    ? normalized
+    : 'other';
+};
+
+const parseManualDepositMethod = (notes = '') => {
+  const text = String(notes || '');
+  if (!text) {
+    return { method: 'other', methodLabel: MANUAL_METHOD_LABELS.other };
+  }
+
+  const explicitMatch = text.match(/(?:manual deposit(?: recorded| entry)?|funds credited)\s*\(([^)]+)\)/i);
+  if (explicitMatch?.[1]) {
+    const method = normalizeMethodKey(explicitMatch[1]);
+    return { method, methodLabel: MANUAL_METHOD_LABELS[method] || MANUAL_METHOD_LABELS.other };
+  }
+
+  const lowered = toLower(text);
+  const matchedKey = Object.keys(MANUAL_METHOD_LABELS).find((key) => lowered.includes(key.replace(/_/g, ' ')) || lowered.includes(key));
+  const method = matchedKey || 'other';
+  return { method, methodLabel: MANUAL_METHOD_LABELS[method] || MANUAL_METHOD_LABELS.other };
+};
+
+const parseManualWithdrawalMethod = (notes = '') => {
+  const text = String(notes || '');
+  if (!text) {
+    return { method: 'other', methodLabel: MANUAL_METHOD_LABELS.other };
+  }
+
+  const explicitMatch = text.match(/withdrawal entry\s*\(([^)]+)\)/i);
+  if (explicitMatch?.[1]) {
+    const method = normalizeMethodKey(explicitMatch[1]);
+    return { method, methodLabel: MANUAL_METHOD_LABELS[method] || MANUAL_METHOD_LABELS.other };
+  }
+
+  const lowered = toLower(text);
+  const matchedKey = Object.keys(MANUAL_METHOD_LABELS).find((key) => lowered.includes(key.replace(/_/g, ' ')) || lowered.includes(key));
+  const method = matchedKey || 'other';
+  return { method, methodLabel: MANUAL_METHOD_LABELS[method] || MANUAL_METHOD_LABELS.other };
 };
 
 const inferCategory = (tx) => {
@@ -50,6 +123,22 @@ const resolveTitleAndSubtitle = (tx, category, rawType) => {
   const cleanNotes = toDisplayText(notes, 110);
   const exitReason = extractExitReason(notes);
   const signedAmount = toNumber(tx?.amount);
+
+  if (rawType === 'manual_deposit') {
+    const { methodLabel } = parseManualDepositMethod(notes);
+    return {
+      title: 'Funds Credited',
+      subtitle: methodLabel,
+    };
+  }
+
+  if (rawType === 'manual_withdrawal') {
+    const { methodLabel } = parseManualWithdrawalMethod(notes);
+    return {
+      title: 'Funds Debited',
+      subtitle: methodLabel,
+    };
+  }
 
   if (rawType === 'credit') {
     return {
@@ -156,12 +245,13 @@ const resolveTitleAndSubtitle = (tx, category, rawType) => {
 };
 
 const resolveDirection = (rawType, amount, category) => {
-  if (rawType === 'withdrawal' || rawType === 'realized_loss' || rawType === 'margin_locked_delivery') {
+  if (rawType === 'withdrawal' || rawType === 'manual_withdrawal' || rawType === 'realized_loss' || rawType === 'margin_locked_delivery') {
     return 'debit';
   }
 
   if (
     rawType === 'credit' ||
+    rawType === 'manual_deposit' ||
     rawType === 'realized_profit' ||
     rawType === 'margin_refunded_rejection' ||
     rawType === 'margin_released_midnight_intraday' ||
@@ -214,12 +304,22 @@ const matchesFundTransactionCategory = (tx, category) => {
 };
 
 const mapFundTransactionForCustomer = (tx) => {
-  const rawType = toLower(tx?.type);
+  const baseRawType = toLower(tx?.type);
+  const rawType = isManualDepositTransaction(tx)
+    ? 'manual_deposit'
+    : isManualWithdrawalTransaction(tx)
+      ? 'manual_withdrawal'
+      : baseRawType;
   const category = inferCategory(tx);
   const signedAmount = toNumber(tx?.amount);
   const direction = resolveDirection(rawType, signedAmount, category);
   const { title, subtitle } = resolveTitleAndSubtitle(tx, category, rawType);
   const timestamp = getTimestampDate(tx);
+  const manualMethodMeta = rawType === 'manual_deposit'
+    ? parseManualDepositMethod(tx?.notes || tx?.description || '')
+    : rawType === 'manual_withdrawal'
+      ? parseManualWithdrawalMethod(tx?.notes || tx?.description || '')
+    : { method: '', methodLabel: '' };
 
   return {
     id: tx?._id?.toString?.() || tx?.id?.toString?.() || '',
@@ -233,6 +333,8 @@ const mapFundTransactionForCustomer = (tx) => {
     status: normalizeStatus(tx?.status),
     reference: String(tx?.reference || '').trim(),
     rawType,
+    method: manualMethodMeta.method,
+    methodLabel: manualMethodMeta.methodLabel,
   };
 };
 

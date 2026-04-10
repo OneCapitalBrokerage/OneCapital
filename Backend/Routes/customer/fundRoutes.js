@@ -3,6 +3,7 @@
 
 import express from 'express';
 import { protect } from '../../Middleware/authMiddleware.js';
+import { checkDealerModeFunds } from '../../Middleware/checkDealerMode.js';
 import {
   getBalance,
   requestAddFunds,
@@ -39,21 +40,21 @@ router.get('/funds/transactions', getFundHistory);
  * @desc    Request to add funds (submit payment)
  * @access  Private (Customer only)
  */
-router.post('/funds/add', requestAddFunds);
+router.post('/funds/add', checkDealerModeFunds, requestAddFunds);
 
 /**
  * @route   POST /api/customer/funds/add/:id/proof
  * @desc    Submit add-funds payment proof (image)
  * @access  Private (Customer only)
  */
-router.post('/funds/add/:id/proof', submitAddFundsProof);
+router.post('/funds/add/:id/proof', checkDealerModeFunds, submitAddFundsProof);
 
 /**
  * @route   POST /api/customer/funds/withdraw
  * @desc    Request withdrawal
  * @access  Private (Customer only)
  */
-router.post('/funds/withdraw', requestWithdraw);
+router.post('/funds/withdraw', checkDealerModeFunds, requestWithdraw);
 
 /**
  * @route   GET /api/customer/funds/payments

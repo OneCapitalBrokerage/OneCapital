@@ -6,6 +6,11 @@ import { createContext, useContext, useState, useEffect, useCallback } from 'rea
 import { useNavigate } from 'react-router-dom';
 import api from '../api/index';
 import { clearTokens, getStoredUser, setAuthToken, setRefreshToken, setStoredUser } from '../api/index';
+import {
+  clearAdminBrokerSwitchSnapshot,
+  hasAdminBrokerSwitchSnapshot,
+  restoreAdminFromBrokerSwitch,
+} from '../utils/adminBrokerSwitch';
 
 const BrokerContext = createContext(null);
 
@@ -35,7 +40,7 @@ export const BrokerAuthProvider = ({ children }) => {
             const response = await api.get('/broker/profile');
             const brokerProfile = response.data?.broker || response.data?.profile || response.data;
             setBroker(brokerProfile);
-          } catch (_err) {
+          } catch {
             // Token expired or invalid
             clearTokens();
             setBroker(null);
@@ -88,17 +93,27 @@ export const BrokerAuthProvider = ({ children }) => {
    * Broker Logout
    */
   const logout = useCallback(async () => {
+    const switchedFromAdmin = hasAdminBrokerSwitchSnapshot();
     setLoading(true);
     try {
       await api.post('/auth/logout');
     } catch (err) {
       console.error('Broker logout error:', err);
-    } finally {
-      clearTokens();
-      setBroker(null);
-      setLoading(false);
-      navigate('/broker/login');
     }
+
+    clearTokens();
+    setBroker(null);
+    setLoading(false);
+    if (switchedFromAdmin) {
+      const restored = restoreAdminFromBrokerSwitch('/admin/brokers');
+      if (!restored) {
+        clearAdminBrokerSwitchSnapshot();
+        navigate('/admin/login');
+      }
+      return;
+    }
+    clearAdminBrokerSwitchSnapshot();
+    navigate('/broker/login');
   }, [navigate]);
 
   /**

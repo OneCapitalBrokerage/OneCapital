@@ -18,6 +18,11 @@ const PAYMENT_METHOD_LABELS = {
   imps: 'IMPS',
   neft: 'NEFT',
   rtgs: 'RTGS',
+  bank_transfer: 'Bank Transfer',
+  cash: 'Cash',
+  cheque: 'Cheque',
+  internal: 'Internal',
+  other: 'Other',
 };
 
 const toFiniteNumber = (value) => {
@@ -63,21 +68,50 @@ const PaymentVerification = () => {
     setLoading(true);
     setError(null);
     try {
-      const [requestsRes, statsRes] = await Promise.all([
+      const includeManualApproved = activeFilter === 'verified';
+      const [requestsRes, statsRes, manualDepositsRes] = await Promise.all([
         brokerApi.getPayments({ status: activeFilter }),
-        brokerApi.getPaymentStats()
+        brokerApi.getPaymentStats(),
+        includeManualApproved
+          ? brokerApi.getManualDeposits({ limit: 100 })
+          : Promise.resolve({ deposits: [] }),
       ]);
 
       const requestsData = requestsRes.payments || requestsRes.data || [];
-      setRequests(requestsData);
+      const manualDeposits = Array.isArray(manualDepositsRes?.deposits)
+        ? manualDepositsRes.deposits
+        : [];
+
+      const manualRows = manualDeposits.map((entry) => ({
+        id: `manual-${entry.id || `${entry.customerId}-${entry.paidAt}`}`,
+        customerId: entry.customerId,
+        clientId: entry.customerId,
+        customerName: entry.customerName,
+        clientName: entry.customerName,
+        name: entry.customerName,
+        amount: toFiniteNumber(entry.amount),
+        paymentMethod: entry.method || 'other',
+        status: 'verified',
+        paymentReference: entry.reference || '',
+        reviewedAt: entry.paidAt,
+        createdAt: entry.paidAt,
+        manualMethodLabel: entry.methodLabel || '',
+        isManualDeposit: true,
+      }));
+
+      const mergedRequests = [...requestsData, ...manualRows]
+        .sort((a, b) => new Date(b.reviewedAt || b.createdAt || 0) - new Date(a.reviewedAt || a.createdAt || 0));
+
+      setRequests(mergedRequests);
 
       const statsData = statsRes.stats || statsRes.data || statsRes;
-      const fallbackTotal = requestsData.reduce((sum, r) => sum + (r.amount || 0), 0);
+      const fallbackTotal = mergedRequests.reduce((sum, r) => sum + (r.amount || 0), 0);
+      const manualApprovedAmount = manualRows.reduce((sum, entry) => sum + toFiniteNumber(entry.amount), 0);
       setStats({
         totalPending: extractAmount(statsData.totalPending ?? statsData.totalAmount ?? statsData.pending, fallbackTotal),
         pendingCount: extractCount(statsData.pendingCount ?? statsData.pending, requestsData.length),
-        totalApproved: extractAmount(statsData.verified, 0),
-        approvedCount: extractCount(statsData.verified, 0),
+        totalApproved: extractAmount(statsData.verified, 0) + manualApprovedAmount,
+        approvedCount: extractCount(statsData.verified, 0) + manualRows.length,
       });
     } catch (err) {
       console.error('Failed to fetch payment requests:', err);
@@ -239,6 +273,9 @@ const PaymentVerification = () => {
               const canReject = isPendingView && isPendingReview;
               const customerName = request.customerName || request.clientName || request.name || 'Unknown';
               const customerId = request.customerId || request.clientId || request.client_id || '';
+              const methodLabel = request.manualMethodLabel
+                || PAYMENT_METHOD_LABELS[String(request.paymentMethod || 'upi').toLowerCase()]
+                || 'Payment';
               return (
                 <div key={id} className="flex flex-col rounded-xl shadow-sm bg-white overflow-hidden">
                   {/* Request Header with Status */}
@@ -261,7 +298,7 @@ const PaymentVerification = () => {
                           {customerName} {customerId ? `• ${customerId}` : ''}
                         </p>
                         <p className="text-[#137fec] text-[10px] font-semibold mt-1">
-                          {PAYMENT_METHOD_LABELS[String(request.paymentMethod || 'upi').toLowerCase()] || 'UPI'}
+                          {methodLabel}
                         </p>
                       </div>
                     </div>
@@ -311,7 +348,7 @@ const PaymentVerification = () => {
                     ) : (
                       <div className="bg-green-50 border border-green-100 rounded-lg p-2.5">
                         <p className="text-[11px] text-green-700">
-                          Approved on {request.reviewedAt ? new Date(request.reviewedAt).toLocaleString('en-IN') : 'N/A'}
+                          {request.isManualDeposit ? 'Credited on' : 'Approved on'} {request.reviewedAt ? new Date(request.reviewedAt).toLocaleString('en-IN') : 'N/A'}
                         </p>
                       </div>
                     )}

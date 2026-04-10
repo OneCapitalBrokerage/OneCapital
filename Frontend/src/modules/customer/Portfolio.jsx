@@ -253,6 +253,21 @@ const Portfolio = () => {
     setSessionBoundaryType(nextState?.sessionBoundaryType || 'trading_week_start');
   }, []);
 
+  const fetchAllOrders = useCallback(async () => {
+    const limit = 200;
+    const maxPages = 50;
+    const collected = [];
+
+    for (let page = 1; page <= maxPages; page += 1) {
+      const response = await customerApi.getOrders({ page, limit });
+      const batch = response?.orders || response?.data || [];
+      collected.push(...batch);
+      if (batch.length < limit) break;
+    }
+
+    return collected;
+  }, []);
+
   const fetchPortfolio = useCallback(async (options = {}) => {
     const { force = false } = options;
     let shouldShowLoading = true;
@@ -281,12 +296,12 @@ const Portfolio = () => {
     setError(null);
     try {
       const [ordersRes, holdingsRes, balanceRes] = await Promise.all([
-        customerApi.getOrders(),
+        fetchAllOrders(),
         customerApi.getHoldings().catch(() => ({ holdings: [] })),
         customerApi.getBalance().catch(() => ({})),
       ]);
 
-      const allOrders = ordersRes.orders || ordersRes.data || [];
+      const allOrders = Array.isArray(ordersRes) ? ordersRes : [];
       const holdingsData = holdingsRes.holdings || holdingsRes.data || [];
       const boundaryStart = balanceRes?.summary?.weekBoundaryStart
         || balanceRes?.settlement?.boundaryStart
@@ -532,7 +547,7 @@ const Portfolio = () => {
         setLoading(false);
       }
     }
-  }, [applyPortfolioState]);
+  }, [applyPortfolioState, fetchAllOrders]);
 
   useEffect(() => {
     fetchPortfolio();

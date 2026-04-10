@@ -111,8 +111,37 @@ const Profile = () => {
     navigate('/login');
   };
 
-  const { canInstall, triggerInstall } = usePWAInstall();
+  const { canInstall, isInstalled, isInstalling, triggerInstall } = usePWAInstall();
   const [activeLegalDocument, setActiveLegalDocument] = useState(null);
+  const [installMessage, setInstallMessage] = useState('');
+
+  const handleInstallApp = useCallback(async () => {
+    const result = await triggerInstall();
+    if (!result?.status) return;
+
+    switch (result.status) {
+      case 'busy':
+        setInstallMessage('Install prompt is already opening.');
+        return;
+      case 'accepted':
+        setInstallMessage('App installed successfully.');
+        return;
+      case 'installed':
+        setInstallMessage('App is already installed on this device.');
+        return;
+      case 'dismissed':
+        setInstallMessage('Install canceled. You can start it again anytime.');
+        return;
+      case 'unavailable':
+        setInstallMessage('Install prompt is unavailable in this browser session.');
+        return;
+      case 'error':
+        setInstallMessage('Could not open install prompt. Please try again.');
+        return;
+      default:
+        return;
+    }
+  }, [triggerInstall]);
 
   const menuItems = [
     { icon: 'menu_book', label: 'Order Book', path: '/order-book' },
@@ -122,7 +151,13 @@ const Profile = () => {
     { icon: 'privacy_tip', label: 'Privacy Policy', action: () => setActiveLegalDocument('privacy') },
     { icon: 'info', label: 'About', path: '/about' },
     { icon: 'settings', label: 'Settings', path: '/settings' },
-    ...(canInstall ? [{ icon: 'install_mobile', label: 'Install App', action: triggerInstall }] : []),
+    {
+      icon: isInstalled ? 'check_circle' : 'install_mobile',
+      label: isInstalling ? 'Opening installer...' : (isInstalled ? 'App Installed' : 'Install App'),
+      action: handleInstallApp,
+      disabled: isInstalling,
+      showStatusDot: canInstall && !isInstalled,
+    },
   ];
 
   return (
@@ -310,17 +345,34 @@ const Profile = () => {
           {menuItems.filter(item => !item.danger).map((item, index, arr) => (
             <button
               key={item.path || item.label}
-              onClick={() => item.action ? item.action() : navigate(item.path, item.state ? { state: item.state } : undefined)}
-              className={`w-full flex items-center gap-3 sm:gap-4 px-3 sm:px-4 py-3 sm:py-4 hover:bg-gray-50 dark:hover:bg-[#16231d] transition-colors ${
+              onClick={() => {
+                if (item.disabled) return;
+                if (item.action) {
+                  item.action();
+                  return;
+                }
+                navigate(item.path, item.state ? { state: item.state } : undefined);
+              }}
+              className={`w-full flex items-center gap-3 sm:gap-4 px-3 sm:px-4 py-3 sm:py-4 transition-colors ${
+                item.disabled ? 'opacity-65 cursor-not-allowed' : 'hover:bg-gray-50 dark:hover:bg-[#16231d]'
+              } ${
                 index < arr.length - 1 ? 'border-b border-gray-100 dark:border-[#22352d]' : ''
               }`}
             >
               <span className="material-symbols-outlined text-[#617589] dark:text-[#9cb7aa] text-[22px] sm:text-[24px]">{item.icon}</span>
               <span className="text-[#111418] dark:text-[#e8f3ee] text-[14px] sm:text-[15px] font-medium flex-1 text-left">{item.label}</span>
+              {item.showStatusDot && (
+                <span className="inline-block size-2 rounded-full bg-[#22c55e]" aria-hidden="true" />
+              )}
               <span className="material-symbols-outlined text-gray-400 dark:text-[#6f8b7f] text-[18px] sm:text-[20px]">chevron_right</span>
             </button>
           ))}
         </div>
+        {installMessage && (
+          <p className="mt-2 px-1 text-[12px] text-[#617589] dark:text-[#9cb7aa]" aria-live="polite">
+            {installMessage}
+          </p>
+        )}
       </div>
 
       {/* Logout Button */}

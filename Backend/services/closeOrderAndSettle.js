@@ -15,6 +15,10 @@
 import Order from '../Model/Trading/OrdersModel.js';
 import Fund from '../Model/FundManagement/FundModel.js';
 import { rollbackOptionUsage } from '../Utils/OptionLimitManager.js';
+import {
+  assertPnlOnlyMutation,
+  snapshotFundBalanceAxes,
+} from '../Utils/fundBalanceInvariants.js';
 import { releaseMarginOnClose } from './marginLifecycle.js';
 import {
   getClientPricingConfig,
@@ -198,6 +202,8 @@ export async function closeOrderAndSettle(orderId, { exitPrice, exitReason = 'ma
       return { ok: true, order, pnl: { grossPnl, totalBrokerage, netPnl }, warning: 'fund_not_found' };
     }
 
+    const beforeAxes = snapshotFundBalanceAxes(fund);
+
     // 5. Release margin from fund (immediate per-order release)
     const marginToRelease = originalMarginBlocked > 0
       ? originalMarginBlocked
@@ -233,6 +239,13 @@ export async function closeOrderAndSettle(orderId, { exitPrice, exitReason = 'ma
     });
 
     fund.last_calculated_at = now;
+
+    const afterAxes = snapshotFundBalanceAxes(fund);
+    assertPnlOnlyMutation({
+      before: beforeAxes,
+      after: afterAxes,
+      context: 'closeOrderAndSettle',
+    });
 
     // 8. Save fund
     try {

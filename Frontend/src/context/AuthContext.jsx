@@ -298,6 +298,7 @@ export const AuthProvider = ({ children }) => {
     error,
     sessionBoot,
     isAuthenticated: !!user,
+    dealerMode: user?.dealerMode || false,
     login,
     signup,
     logout,

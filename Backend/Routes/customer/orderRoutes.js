@@ -4,6 +4,7 @@
 import express from 'express';
 import { protect } from '../../Middleware/authMiddleware.js';
 import { requireTrading } from '../../Middleware/restrictionMiddleware.js';
+import { checkDealerModeTrading } from '../../Middleware/checkDealerMode.js';
 import {
   placeOrder,
   getOrders,
@@ -37,14 +38,14 @@ router.get('/orders', getOrders);
  * @desc    Place new order
  * @access  Private (Customer only)
  */
-router.post('/orders', requireTrading, placeOrder);
+router.post('/orders', requireTrading, checkDealerModeTrading, placeOrder);
 
 /**
  * @route   POST /api/customer/postOrder
  * @desc    Place order via legacy pipeline
  * @access  Private (Customer only)
  */
-router.post('/postOrder', requireTrading, (req, res, next) => {
+router.post('/postOrder', requireTrading, checkDealerModeTrading, (req, res, next) => {
   req.body = {
     ...req.body,
     broker_id_str: req.user.stringBrokerId || req.user.broker_id_str || req.user.attached_broker_id?.toString(),
@@ -102,13 +103,13 @@ router.get('/pnl', getPnlReport);
  * @desc    Modify order
  * @access  Private (Customer only)
  */
-router.put('/orders/:id', requireTrading, modifyOrder);
+router.put('/orders/:id', requireTrading, checkDealerModeTrading, modifyOrder);
 
 /**
  * @route   DELETE /api/customer/orders/:id
  * @desc    Cancel order
  * @access  Private (Customer only)
  */
-router.delete('/orders/:id', requireTrading, cancelOrder);
+router.delete('/orders/:id', requireTrading, checkDealerModeTrading, cancelOrder);
 
 export default router;

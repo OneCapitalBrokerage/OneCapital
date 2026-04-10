@@ -346,6 +346,7 @@ const Approvals = () => {
     withdrawalPending: 0,
     paymentPending: 0,
     registrationPending: 0,
+    manualDepositCount: 0,
   });
   const [kycApprovals, setKycApprovals] = useState([]);
   const [registrations, setRegistrations] = useState([]);
@@ -365,7 +366,7 @@ const Approvals = () => {
     setLoading(true);
     setError(null);
     try {
-      const [kycRes, kycStatsRes, cncStatsRes, wdStatsRes, pmtStatsRes, regStatsRes, regsRes] = await Promise.all([
+      const [kycRes, kycStatsRes, cncStatsRes, wdStatsRes, pmtStatsRes, regStatsRes, regsRes, dashboardRes] = await Promise.all([
         brokerApi.getKycRequests({ status: 'pending' }).catch(() => null),
         brokerApi.getKycStats().catch(() => null),
         brokerApi.getCncStats().catch(() => null),
@@ -373,7 +374,12 @@ const Approvals = () => {
         brokerApi.getPaymentStats().catch(() => null),
         brokerApi.getRegistrationStats().catch(() => null),
         brokerApi.getRegistrations({ status: 'all', page: 1, limit: 200 }).catch(() => null),
+        brokerApi.getDashboard().catch(() => null),
       ]);
+
+      const manualDepositCount = toFiniteNumber(
+        dashboardRes?.data?.approvals?.manualDepositCount
+      );
 
       const regStats = regStatsRes?.stats || {};
       const regPending = toFiniteNumber(regStats.pending) + toFiniteNumber(regStats.under_review);
@@ -396,6 +402,7 @@ const Approvals = () => {
           pmtStatsRes?.stats?.pendingCount ?? pmtStatsRes?.stats?.pending ?? pmtStatsRes?.pendingCount ?? pmtStatsRes?.pending
         ),
         registrationPending: regPending,
+        manualDepositCount,
       });
     } catch (err) {
       console.error('Failed to fetch approvals:', err);
@@ -715,6 +722,9 @@ const Approvals = () => {
                 KYC: {stats.kycPending} | REG: {stats.registrationPending} | CNC: {stats.cncPending} | WD: {stats.withdrawalPending} | PMT: {stats.paymentPending}
               </span>
             </div>
+            <p className="text-[11px] text-[#617589]">
+              Funds Credited (Manual): <span className="font-semibold text-[#111418]">{stats.manualDepositCount}</span>
+            </p>
           </div>
         </div>
 

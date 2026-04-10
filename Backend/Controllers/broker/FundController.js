@@ -5,8 +5,36 @@ import asyncHandler from 'express-async-handler';
 import FundModel from '../../Model/FundManagement/FundModel.js';
 import CustomerModel from '../../Model/Auth/CustomerModel.js';
 import { writeAuditSuccess } from '../../Utils/AuditLogger.js';
+import {
+  assertDepositOnlyMutation,
+  snapshotFundBalanceAxes,
+} from '../../Utils/fundBalanceInvariants.js';
 
 const DEFAULT_OPTION_CHAIN_LIMIT_PERCENT = 10;
+const DEFAULT_MANUAL_DEPOSIT_METHOD = 'upi';
+const MANUAL_DEPOSIT_METHODS = new Set([
+  'upi',
+  'imps',
+  'neft',
+  'rtgs',
+  'bank_transfer',
+  'cash',
+  'cheque',
+  'internal',
+  'other',
+]);
+
+const MANUAL_DEPOSIT_METHOD_LABELS = {
+  upi: 'UPI',
+  imps: 'IMPS',
+  neft: 'NEFT',
+  rtgs: 'RTGS',
+  bank_transfer: 'Bank Transfer',
+  cash: 'Cash',
+  cheque: 'Cheque',
+  internal: 'Internal',
+  other: 'Other',
+};
 
 const toNumber = (value) => {
   const n = Number(value);
@@ -24,6 +52,35 @@ const normalizeOptionLimitPercent = (value) => {
   const n = Number(value);
   if (!Number.isFinite(n)) return DEFAULT_OPTION_CHAIN_LIMIT_PERCENT;
   return Math.max(0, Math.min(100, n));
+};
+const toIsoDate = (value) => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+};
+
+const sanitizeText = (value, maxLen = 200) => String(value || '').trim().slice(0, maxLen);
+
+const normalizeManualDepositMethod = (value) => {
+  const method = String(value || DEFAULT_MANUAL_DEPOSIT_METHOD).trim().toLowerCase();
+  if (MANUAL_DEPOSIT_METHODS.has(method)) return method;
+  return DEFAULT_MANUAL_DEPOSIT_METHOD;
+};
+
+const buildManualDepositNote = ({
+  method,
+  reference,
+  notes,
+  paidAt,
+}) => {
+  const pieces = [];
+  const methodLabel = MANUAL_DEPOSIT_METHOD_LABELS[method] || 'Payment';
+  pieces.push(`Funds credited (${methodLabel})`);
+  if (reference) pieces.push(`Ref: ${reference}`);
+  if (paidAt) pieces.push(`Paid at: ${paidAt.toISOString()}`);
+  if (notes) pieces.push(`Broker note: ${notes}`);
+  return pieces.join(' | ');
 };
 
 const getBrokerOwnershipClauses = (brokerId, brokerIdStr) => {
@@ -124,6 +181,43 @@ const getChangedFundFields = (beforeSnapshot, afterSnapshot) => {
   return fields;
 };
 
+const isManualDepositTransaction = (transaction = {}) => {
+  if (String(transaction?.type || '').toLowerCase() !== 'credit') return false;
+  const notes = String(transaction?.notes || '').toLowerCase();
+  return (
+    notes.includes('manual deposit recorded')
+    || notes.includes('manual deposit entry')
+    || notes.includes('funds credited')
+  );
+};
+
+const parseManualDepositMethodFromNotes = (notes = '') => {
+  const text = String(notes || '');
+  const match = text.match(/(?:manual deposit(?: recorded| entry)?|funds credited)\s*\(([^)]+)\)/i);
+  if (!match?.[1]) return 'other';
+
+  const raw = String(match[1]).trim().toLowerCase();
+  const methodKey = Object.entries(MANUAL_DEPOSIT_METHOD_LABELS)
+    .find(([, label]) => label.toLowerCase() === raw)?.[0];
+  return methodKey || 'other';
+};
+
+const mapManualDepositResponse = ({ transaction, customer }) => {
+  const method = parseManualDepositMethodFromNotes(transaction?.notes || '');
+  return {
+    id: transaction?._id?.toString?.() || '',
+    customerId: customer?.customer_id || customer?.id || '',
+    customerName: customer?.name || '',
+    amount: Math.abs(toNumber(transaction?.amount)),
+    method,
+    methodLabel: MANUAL_DEPOSIT_METHOD_LABELS[method] || MANUAL_DEPOSIT_METHOD_LABELS.other,
+    paidAt: transaction?.timestamp || null,
+    reference: String(transaction?.reference || '').trim(),
+    notes: String(transaction?.notes || '').trim(),
+    status: String(transaction?.status || 'completed').toLowerCase(),
+  };
+};
+
 const applyFundSnapshot = (fund, snapshot) => {
   // Use depositedCash (pure deposits) — fall back to availableCash for backward compat
   const depositedCash = nonNegative(snapshot.depositedCash ?? snapshot.availableCash);
@@ -222,6 +316,29 @@ const findOrCreateFund = async (customer, brokerIdStr) => {
   return fund;
 };
 
+const findFundForCustomer = async (customer, brokerIdStr) => {
+  if (!customer) return null;
+
+  let fund = await FundModel.findOne({ customer_id: customer._id });
+
+  if (!fund && brokerIdStr) {
+    fund = await FundModel.findOne({
+      customer_id_str: customer.customer_id,
+      broker_id_str: brokerIdStr,
+    });
+  }
+
+  if (!fund) {
+    fund = await FundModel.findOne({ customer_id_str: customer.customer_id });
+  }
+
+  if (fund) {
+    normalizeFundDocument(fund);
+  }
+
+  return fund;
+};
+
 const buildBalanceResponse = (customer, fund) => {
   const snapshot = getFundSnapshot(fund);
 
@@ -301,6 +418,7 @@ const addFundsToClient = asyncHandler(async (req, res) => {
   }
 
   const fund = await findOrCreateFund(customer, brokerIdStr);
+  const beforeAxes = snapshotFundBalanceAxes(fund);
   const beforeSnapshot = getFundSnapshot(fund);
   const previousBalance = nonNegative(fund.net_available_balance);
   const updatedBalance = previousBalance + Number(amount);
@@ -319,6 +437,13 @@ const addFundsToClient = asyncHandler(async (req, res) => {
     notes: notes || 'Funds added by broker',
     addedBy: brokerId,
     timestamp: new Date(),
+  });
+
+  const afterAxes = snapshotFundBalanceAxes(fund);
+  assertDepositOnlyMutation({
+    before: beforeAxes,
+    after: afterAxes,
+    context: 'FundController.addFundsToClient',
   });
 
   await fund.save();
@@ -394,6 +519,244 @@ const addFundsToClient = asyncHandler(async (req, res) => {
       previousBalance,
       addedAmount: Number(amount),
       newBalance: nonNegative(fund.net_available_balance),
+    },
+  });
+});
+
+/**
+ * @desc     Record manual deposit received via external channels (e.g. WhatsApp)
+ * @route    POST /api/broker/clients/:id/manual-deposits
+ * @access   Private (Broker only)
+ */
+const createManualDeposit = asyncHandler(async (req, res) => {
+  const brokerId = req.user._id;
+  const brokerIdStr = req.user.login_id || req.user.stringBrokerId;
+  const { id } = req.params;
+  const {
+    amount,
+    method,
+    paidAt,
+    reference,
+    notes,
+  } = req.body || {};
+
+  const parsedAmount = toNumber(amount);
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+    return res.status(400).json({
+      success: false,
+      message: 'Valid amount is required.',
+    });
+  }
+
+  const normalizedMethod = normalizeManualDepositMethod(method);
+  const paidAtDate = paidAt ? toIsoDate(paidAt) : new Date();
+  if (paidAt && !paidAtDate) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid paidAt date-time.',
+    });
+  }
+
+  const sanitizedReference = sanitizeText(reference, 80);
+  const sanitizedNotes = sanitizeText(notes, 240);
+
+  const customer = await findOwnedCustomer(id, brokerId, brokerIdStr);
+  if (!customer) {
+    return res.status(404).json({
+      success: false,
+      message: 'Client not found.',
+    });
+  }
+
+  const fund = await findOrCreateFund(customer, brokerIdStr);
+  const beforeAxes = snapshotFundBalanceAxes(fund);
+  const beforeSnapshot = getFundSnapshot(fund);
+
+  const previousDepositedCash = nonNegative(fund.net_available_balance);
+  const updatedDepositedCash = previousDepositedCash + parsedAmount;
+
+  applyFundSnapshot(fund, {
+    depositedCash: updatedDepositedCash,
+    intradayAvailable: fund.intraday?.available_limit ?? fund.intraday?.available,
+    longTermAvailable: fund.overnight?.available_limit ?? fund.delivery?.available,
+    optionChainLimitPercent: fund.option_premium?.limit_percentage ?? fund.option_limit_percentage,
+    commodityDeliveryAvailable: fund.commodity_delivery?.available_limit,
+    commodityIntradayAvailable: fund.commodity_intraday?.available_limit,
+    commodityOptionLimitPercent: fund.commodity_option?.limit_percentage,
+  });
+
+  if (!fund.transactions) fund.transactions = [];
+
+  const transaction = {
+    type: 'credit',
+    amount: parsedAmount,
+    notes: buildManualDepositNote({
+      method: normalizedMethod,
+      reference: sanitizedReference,
+      notes: sanitizedNotes,
+      paidAt: paidAtDate,
+    }),
+    status: 'completed',
+    reference: sanitizedReference,
+    addedBy: brokerId,
+    timestamp: paidAtDate,
+  };
+
+  fund.transactions.push(transaction);
+
+  const afterAxes = snapshotFundBalanceAxes(fund);
+  assertDepositOnlyMutation({
+    before: beforeAxes,
+    after: afterAxes,
+    context: 'FundController.createManualDeposit',
+  });
+
+  await fund.save();
+
+  const savedTx = fund.transactions[fund.transactions.length - 1] || transaction;
+  const afterSnapshot = getFundSnapshot(fund);
+
+  await writeAuditSuccess({
+    req,
+    type: 'transaction',
+    eventType: 'FUND_MANUAL_DEPOSIT_CREATE',
+    category: 'funds',
+    message: `Broker credited ${formatCurrency(parsedAmount)} to customer ${customer.customer_id}.`,
+    target: {
+      type: 'customer',
+      id: customer._id,
+      id_str: customer.customer_id,
+    },
+    entity: {
+      type: 'fund',
+      id: fund._id,
+      ref: customer.customer_id,
+    },
+    broker: {
+      broker_id: brokerId,
+      broker_id_str: brokerIdStr,
+    },
+    customer: {
+      customer_id: customer._id,
+      customer_id_str: customer.customer_id,
+    },
+    amountDelta: parsedAmount,
+    fundBefore: {
+      depositedCash: beforeSnapshot.depositedCash,
+      availableCash: beforeSnapshot.availableCash,
+      openingBalance: beforeSnapshot.openingBalance,
+    },
+    fundAfter: {
+      depositedCash: afterSnapshot.depositedCash,
+      availableCash: afterSnapshot.availableCash,
+      openingBalance: afterSnapshot.openingBalance,
+    },
+    marginBefore: {
+      intradayAvailable: beforeSnapshot.intradayAvailable,
+      intradayUsed: beforeSnapshot.intradayUsed,
+      longTermAvailable: beforeSnapshot.longTermAvailable,
+      optionChainLimitPercent: beforeSnapshot.optionChainLimitPercent,
+    },
+    marginAfter: {
+      intradayAvailable: afterSnapshot.intradayAvailable,
+      intradayUsed: afterSnapshot.intradayUsed,
+      longTermAvailable: afterSnapshot.longTermAvailable,
+      optionChainLimitPercent: afterSnapshot.optionChainLimitPercent,
+    },
+    note: sanitizedNotes || `Manual deposit method: ${MANUAL_DEPOSIT_METHOD_LABELS[normalizedMethod]}.`,
+    metadata: {
+      method: normalizedMethod,
+      methodLabel: MANUAL_DEPOSIT_METHOD_LABELS[normalizedMethod],
+      paidAt: paidAtDate.toISOString(),
+      reference: sanitizedReference,
+      previousDepositedCash,
+      newDepositedCash: afterSnapshot.depositedCash,
+    },
+  });
+
+  res.status(201).json({
+    success: true,
+    message: 'Manual deposit recorded successfully.',
+    deposit: {
+      id: savedTx?._id?.toString?.() || '',
+      customerId: customer.customer_id,
+      customerName: customer.name,
+      amount: parsedAmount,
+      method: normalizedMethod,
+      methodLabel: MANUAL_DEPOSIT_METHOD_LABELS[normalizedMethod],
+      paidAt: paidAtDate.toISOString(),
+      reference: sanitizedReference,
+      notes: sanitizedNotes,
+      status: 'completed',
+    },
+    balance: {
+      previousDepositedCash,
+      newDepositedCash: afterSnapshot.depositedCash,
+    },
+  });
+});
+
+/**
+ * @desc     Get broker manual deposit history
+ * @route    GET /api/broker/manual-deposits
+ * @access   Private (Broker only)
+ */
+const getManualDeposits = asyncHandler(async (req, res) => {
+  const brokerId = req.user._id;
+  const brokerIdStr = req.user.login_id || req.user.stringBrokerId;
+  const {
+    customerId,
+    page = 1,
+    limit = 20,
+  } = req.query;
+
+  const parsedPage = Math.max(1, parseInt(page, 10) || 1);
+  const parsedLimit = Math.max(1, Math.min(100, parseInt(limit, 10) || 20));
+
+  let selectedCustomers = [];
+  if (customerId) {
+    const customer = await findOwnedCustomer(customerId, brokerId, brokerIdStr);
+    if (!customer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Client not found.',
+      });
+    }
+    selectedCustomers = [customer];
+  } else {
+    selectedCustomers = await CustomerModel.find({
+      $or: getBrokerOwnershipClauses(brokerId, brokerIdStr),
+    }).select('customer_id name _id');
+  }
+
+  const deposits = [];
+
+  for (const customer of selectedCustomers) {
+    // eslint-disable-next-line no-await-in-loop
+    const fund = await findFundForCustomer(customer, brokerIdStr);
+    if (!fund?.transactions?.length) continue;
+
+    const manualDeposits = fund.transactions
+      .filter((transaction) => isManualDepositTransaction(transaction))
+      .map((transaction) => mapManualDepositResponse({ transaction, customer }));
+
+    deposits.push(...manualDeposits);
+  }
+
+  deposits.sort((a, b) => new Date(b.paidAt || 0) - new Date(a.paidAt || 0));
+
+  const total = deposits.length;
+  const skip = (parsedPage - 1) * parsedLimit;
+  const paginatedDeposits = deposits.slice(skip, skip + parsedLimit);
+
+  res.status(200).json({
+    success: true,
+    deposits: paginatedDeposits,
+    pagination: {
+      page: parsedPage,
+      limit: parsedLimit,
+      total,
+      pages: Math.ceil(total / parsedLimit),
     },
   });
 });
@@ -517,6 +880,7 @@ const updateClientFunds = asyncHandler(async (req, res) => {
   }
 
   const fund = await findOrCreateFund(customer, brokerIdStr);
+  const beforeAxes = snapshotFundBalanceAxes(fund);
   const previousSnapshot = getFundSnapshot(fund);
   const nextIntradayAvailable =
     intradayAvailable !== undefined ? nonNegative(intradayAvailable) : previousSnapshot.intradayAvailable;
@@ -559,6 +923,13 @@ const updateClientFunds = asyncHandler(async (req, res) => {
     notes: note || 'Funds edited by broker',
     editedBy: brokerId,
     timestamp: new Date(),
+  });
+
+  const afterAxes = snapshotFundBalanceAxes(fund);
+  assertDepositOnlyMutation({
+    before: beforeAxes,
+    after: afterAxes,
+    context: 'FundController.updateClientFunds',
   });
 
   await fund.save();
@@ -698,7 +1069,9 @@ const getFundHistory = asyncHandler(async (req, res) => {
 
 export {
   addFundsToClient,
+  createManualDeposit,
   getClientBalance,
+  getManualDeposits,
   updateClientFunds,
   getFundHistory,
 };

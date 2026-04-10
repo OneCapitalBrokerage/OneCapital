@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { usePWAInstall } from '../../context/PWAInstallContext';
 import LegalBottomSheet from '../../components/shared/LegalBottomSheet';
 
 const Login = () => {
   const navigate = useNavigate();
   const { login, error: authError, setError: setAuthError } = useAuth();
+  const { isInstalled, isInstalling, triggerInstall } = usePWAInstall();
   const [formData, setFormData] = useState({ userId: '', password: '' });
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [installMessage, setInstallMessage] = useState('');
   const [activeLegalDocument, setActiveLegalDocument] = useState(null);
   const displayError = error || authError || '';
 
@@ -36,6 +39,34 @@ const Login = () => {
       setError(err.message || 'Invalid credentials. Please try again.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleInstallApp = async () => {
+    const result = await triggerInstall();
+    if (!result?.status) return;
+
+    switch (result.status) {
+      case 'busy':
+        setInstallMessage('Install prompt is already opening.');
+        return;
+      case 'accepted':
+        setInstallMessage('App installed successfully.');
+        return;
+      case 'installed':
+        setInstallMessage('App is already installed on this device.');
+        return;
+      case 'dismissed':
+        setInstallMessage('Install canceled. You can try again anytime.');
+        return;
+      case 'unavailable':
+        setInstallMessage('Install is unavailable right now. Open this page in Chrome to install.');
+        return;
+      case 'error':
+        setInstallMessage('Could not open install prompt. Please try again.');
+        return;
+      default:
+        return;
     }
   };
 
@@ -78,7 +109,7 @@ const Login = () => {
       <form onSubmit={handleSubmit} className="flex-1 px-4 sm:px-6 pt-5 pb-6 flex flex-col">
 
         <div className="text-center mb-5">
-          <h2 className="text-base sm:text-lg font-bold text-[#111418]">Welcome back</h2>
+          <h2 className="text-base sm:text-lg font-bold text-[#111418]">Welcome</h2>
           <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5">Sign in to your account</p>
         </div>
 
@@ -180,6 +211,30 @@ const Login = () => {
           <span className="material-symbols-outlined text-[18px]">person_add</span>
           Open Demat Account
         </button>
+
+        <div className="mt-3 rounded-xl border border-[#dbe0e6] bg-[#f8fbff] p-3">
+          <button
+            type="button"
+            onClick={handleInstallApp}
+            disabled={isInstalling}
+            className="mt-2.5 w-full h-10 rounded-lg bg-[#111418] text-white font-semibold text-sm hover:bg-[#1f2933] disabled:bg-slate-300 transition-colors flex items-center justify-center gap-2"
+          >
+            <img
+              src="/logo/playstore.png"
+              alt=""
+              width="18"
+              height="18"
+              className="h-[18px] w-[18px] object-contain"
+              aria-hidden="true"
+            />
+            <span className="text-white">Play Store</span>
+            <span className="text-white/70">-</span>
+            <span className="text-white">{isInstalling ? 'Opening installer...' : isInstalled ? 'App Installed' : 'Install App'}</span>
+          </button>
+          {installMessage && (
+            <p className="mt-2 text-[11px] text-slate-500" aria-live="polite">{installMessage}</p>
+          )}
+        </div>
 
         {/* Footer */}
         <div className="pt-5 text-center">

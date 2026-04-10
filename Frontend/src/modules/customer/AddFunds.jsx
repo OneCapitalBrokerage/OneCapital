@@ -1,248 +1,127 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import TopHeader from '../../components/shared/TopHeader';
 import customerApi from '../../api/customer';
-import {
-  PAYMENT_METHOD_LABELS,
-  getAvailablePaymentMethods,
-  hasBankTransferDetails,
-} from '../../utils/paymentIntake';
+import { buildWhatsAppUrl, formatSupportContact } from '../../utils/whatsappContact';
 
-const quickAmounts = [1000, 5000, 10000, 25000, 50000];
-const PAYMENT_METHOD_META = {
-  upi: {
-    icon: 'qr_code_2',
-    title: 'UPI',
-    description: 'Scan the official broker QR code to pay instantly.',
-  },
-  bank_transfer: {
-    icon: 'account_balance',
-    title: 'Bank Transfer',
-    description: 'Transfer directly to the broker\'s bank account.',
-  },
-};
+const toText = (value) => String(value || '').trim();
 
 const AddFunds = () => {
-  const navigate = useNavigate();
-  const [amount, setAmount] = useState('');
-  const [utrNumber, setUtrNumber] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState('upi');
-  const [paymentInfo, setPaymentInfo] = useState(null);
-  const [paymentInfoLoading, setPaymentInfoLoading] = useState(true);
-  const [paymentInfoError, setPaymentInfoError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [paymentInfo, setPaymentInfo] = useState(null);
 
   useEffect(() => {
     let active = true;
 
     const loadPaymentInfo = async () => {
-      setPaymentInfoLoading(true);
-      setPaymentInfoError('');
+      setLoading(true);
+      setError('');
       try {
         const response = await customerApi.getPaymentInfo();
         if (!active) return;
-        setPaymentInfo(response.paymentInfo || null);
+        setPaymentInfo(response?.paymentInfo || null);
       } catch (err) {
         if (!active) return;
         setPaymentInfo(null);
-        setPaymentInfoError(err?.response?.data?.message || 'Unable to load broker payment details.');
+        setError(err?.response?.data?.message || 'Unable to load broker contact details.');
       } finally {
-        if (active) {
-          setPaymentInfoLoading(false);
-        }
+        if (active) setLoading(false);
       }
     };
 
     loadPaymentInfo();
-
     return () => {
       active = false;
     };
   }, []);
 
-  const availablePaymentMethods = useMemo(
-    () => getAvailablePaymentMethods(paymentInfo),
-    [paymentInfo]
-  );
+  const supportContact = toText(paymentInfo?.supportContact);
+  const whatsappUrl = useMemo(() => {
+    const baseMessage = [
+      'Hi, I want to add funds to my trading account.',
+      paymentInfo?.brokerName ? `Broker: ${paymentInfo.brokerName}` : '',
+      paymentInfo?.brokerId ? `Broker ID: ${paymentInfo.brokerId}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
 
-  useEffect(() => {
-    if (!availablePaymentMethods.length) {
-      setPaymentMethod('');
-      return;
-    }
+    return buildWhatsAppUrl(supportContact, baseMessage);
+  }, [paymentInfo?.brokerId, paymentInfo?.brokerName, supportContact]);
 
-    if (!availablePaymentMethods.includes(paymentMethod)) {
-      setPaymentMethod(availablePaymentMethods[0]);
-    }
-  }, [availablePaymentMethods, paymentMethod]);
+  const canOpenWhatsApp = Boolean(whatsappUrl);
 
-  const handleSubmit = async () => {
-    const parsedAmount = Number(amount);
-    if (!Number.isFinite(parsedAmount) || parsedAmount < 100) {
-      setError('Minimum add-funds amount is ₹100.');
-      return;
-    }
-
-    if (!paymentMethod) {
-      setError('No broker payment method is available right now.');
-      return;
-    }
-
-    setError('');
-    setLoading(true);
-    try {
-      const response = await customerApi.requestAddFunds({
-        amount: parsedAmount,
-        payment_method: paymentMethod,
-        utr_number: utrNumber.trim() || undefined,
-      });
-      navigate('/funds/add/confirm', {
-        state: {
-          amount: parsedAmount,
-          request: response.request,
-          paymentInfo: response.paymentInfo,
-        },
-      });
-    } catch (err) {
-      setError(err?.response?.data?.message || 'Failed to create add-funds request.');
-    } finally {
-      setLoading(false);
-    }
+  const handleOpenWhatsApp = () => {
+    if (!whatsappUrl) return;
+    window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
   };
 
-  const bankTransferReady = hasBankTransferDetails(paymentInfo?.bankTransferDetails);
-  const selectedMethodMeta = PAYMENT_METHOD_META[paymentMethod] || PAYMENT_METHOD_META.upi;
-
   return (
-    <div className="min-h-screen bg-background-light dark:bg-[#050806]">
+    <div className="min-h-screen bg-[#f2f4f6] dark:bg-[#050806] dark:text-[#e8f3ee]">
       <TopHeader title="Add Funds" showBack={true} />
 
-      <div className="px-4 py-5 space-y-6">
-        <div className="space-y-3">
-          <label className="text-sm font-semibold text-gray-500 dark:text-[#9cb7aa] uppercase">Enter Amount</label>
-          <div className="relative">
-            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl font-bold text-gray-400 dark:text-[#6f8b7f]">₹</span>
-            <input
-              type="number"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder="0"
-              className="w-full pl-10 pr-4 py-5 text-3xl font-bold bg-white dark:bg-[#111b17] border border-gray-200 dark:border-[#22352d] rounded-2xl text-gray-900 dark:text-[#e8f3ee] focus:ring-2 focus:ring-primary outline-none text-center"
-            />
-          </div>
-          <p className="text-[11px] text-[#617589]">Make sure to inform your broker about the transfer.</p>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          {quickAmounts.map((amt) => (
-            <button
-              key={amt}
-              onClick={() => setAmount(amt.toString())}
-              className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
-                amount === amt.toString()
-                  ? 'bg-primary text-white'
-                  : 'bg-gray-100 dark:bg-[#0b120f] text-gray-600 dark:text-[#9cb7aa]'
-              }`}
-            >
-              ₹{amt.toLocaleString('en-IN')}
-            </button>
-          ))}
-        </div>
-
-        <div className="rounded-xl border border-gray-200 dark:border-[#22352d] bg-white dark:bg-[#111b17] p-4 space-y-4">
-          <div className="flex items-center gap-3">
-            <span className="material-symbols-outlined text-primary">{selectedMethodMeta.icon}</span>
+      <div className="px-4 py-5 space-y-4">
+        <div className="rounded-2xl border border-[#bfdbfe] dark:border-[#22352d] bg-[#eaf3ff] dark:bg-emerald-500/10 px-4 py-4">
+          <div className="flex items-start gap-3">
+            <span className="material-symbols-outlined text-[#137fec] text-[24px] mt-0.5">chat</span>
             <div>
-              <p className="text-sm font-semibold text-gray-900 dark:text-[#e8f3ee]">Transfer Method</p>
-              <p className="text-xs text-[#617589]">{selectedMethodMeta.description}</p>
+              <p className="text-[#111418] dark:text-[#e8f3ee] text-[17px] font-bold">Add Funds via Broker WhatsApp</p>
+              <p className="mt-1 text-[13px] leading-relaxed text-[#3c4d5f] dark:text-[#9cb7aa]">
+                To keep your account funding secure, add-funds requests are now managed directly with your broker on WhatsApp.
+              </p>
             </div>
           </div>
+        </div>
 
-          {paymentInfoLoading ? (
+        <div className="rounded-xl border border-gray-200 dark:border-[#22352d] bg-white dark:bg-[#111b17] p-4 space-y-3">
+          <p className="text-[11px] uppercase tracking-wide text-[#617589] dark:text-[#9cb7aa]">Broker Contact</p>
+          {loading ? (
             <div className="animate-pulse space-y-2">
-              <div className="h-10 rounded-xl bg-gray-100 dark:bg-[#16231d]" />
-              <div className="h-16 rounded-xl bg-gray-100 dark:bg-[#16231d]" />
-            </div>
-          ) : paymentInfoError ? (
-            <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-700">
-              {paymentInfoError}
-            </div>
-          ) : availablePaymentMethods.length === 0 ? (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800">
-              Broker payment instructions are not configured yet. Please contact support before creating the request.
+              <div className="h-4 w-40 rounded bg-gray-200 dark:bg-[#22352d]" />
+              <div className="h-4 w-28 rounded bg-gray-200 dark:bg-[#22352d]" />
             </div>
           ) : (
             <>
-              <div className="flex flex-wrap gap-2">
-                {availablePaymentMethods.map((method) => (
-                  <button
-                    key={method}
-                    onClick={() => setPaymentMethod(method)}
-                    className={`rounded-full px-3 py-2 text-xs font-semibold transition-colors ${
-                      paymentMethod === method
-                        ? 'bg-[#137fec] text-white'
-                        : 'bg-gray-100 dark:bg-[#0b120f] text-[#617589] dark:text-[#9cb7aa]'
-                    }`}
-                  >
-                    {PAYMENT_METHOD_LABELS[method]}
-                  </button>
-                ))}
-              </div>
-
-              {paymentMethod === 'upi' ? (
-                <div className="rounded-xl border border-gray-200 dark:border-[#22352d] bg-[#fafafa] dark:bg-[#0b120f] px-3 py-3">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-[#617589]">UPI Instructions</p>
-                  <p className="mt-1 text-sm font-semibold text-gray-900 dark:text-[#e8f3ee]">
-                    Scan the official broker QR code on the next screen to complete the payment.
-                  </p>
-                </div>
-              ) : paymentMethod === 'bank_transfer' && bankTransferReady ? (
-                <div className="rounded-xl border border-gray-200 dark:border-[#22352d] bg-[#fafafa] dark:bg-[#0b120f] px-3 py-3 space-y-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-[#617589]">Bank Transfer Instructions</p>
-                  <div className="text-sm text-gray-900 dark:text-[#e8f3ee] space-y-1">
-                    <p>{paymentInfo?.bankTransferDetails?.bankName || 'Bank Account'}</p>
-                    <p className="font-mono">{paymentInfo?.bankTransferDetails?.accountNumber}</p>
-                    <p className="font-mono">{paymentInfo?.bankTransferDetails?.ifscCode}</p>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5 pt-1">
-                    {['RTGS', 'NEFT', 'IMPS'].map((label) => (
-                      <span key={label} className="rounded-full bg-gray-100 dark:bg-[#16231d] px-2.5 py-1 text-[11px] font-semibold text-[#617589] dark:text-[#9cb7aa]">
-                        {label}
-                      </span>
-                    ))}
-                    <span className="text-[11px] text-[#617589] dark:text-[#9cb7aa] self-center">accepted</span>
-                  </div>
-                </div>
-              ) : null}
+              <p className="text-[15px] font-semibold text-[#111418] dark:text-[#e8f3ee]">
+                {paymentInfo?.brokerName || 'Your Broker'}
+              </p>
+              <p className="text-[13px] text-[#617589] dark:text-[#9cb7aa]">
+                WhatsApp: {formatSupportContact(supportContact) || 'Not configured'}
+              </p>
+              {paymentInfo?.brokerId && (
+                <p className="text-[12px] text-[#617589] dark:text-[#9cb7aa]">Broker ID: {paymentInfo.brokerId}</p>
+              )}
             </>
+          )}
+
+          {error && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+              {error}
+            </div>
           )}
         </div>
 
-        <div className="space-y-2">
-          <label className="text-xs font-medium text-gray-500 dark:text-[#9cb7aa]">UTR / Transaction ID/Customer Note (optional)</label>
-          <input
-            type="text"
-            value={utrNumber}
-            onChange={(e) => setUtrNumber(e.target.value)}
-            placeholder="Enter UTR or any note for the broker"
-            className="w-full px-4 py-3 bg-white dark:bg-[#111b17] border border-gray-200 dark:border-[#22352d] rounded-xl text-gray-900 dark:text-[#e8f3ee] text-sm outline-none focus:ring-2 focus:ring-primary"
-          />
+        <div className="rounded-xl border border-gray-200 dark:border-[#22352d] bg-white dark:bg-[#111b17] p-4">
+          <p className="text-[11px] uppercase tracking-wide text-[#617589] dark:text-[#9cb7aa] mb-2">What to share</p>
+          <ul className="space-y-1.5 text-[13px] text-[#111418] dark:text-[#e8f3ee]">
+            <li>Client ID and intended amount</li>
+            <li>Transfer method used (UPI/IMPS/NEFT/RTGS)</li>
+            <li>UTR or transaction reference after payment</li>
+          </ul>
         </div>
 
-        {error && (
-          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900/30 rounded-xl p-3 text-red-700 dark:text-red-400 text-sm">
-            {error}
-          </div>
-        )}
-
         <button
-          onClick={handleSubmit}
-          disabled={loading || !amount || paymentInfoLoading || !paymentMethod}
-          className="w-full bg-primary hover:bg-blue-600 text-white font-bold py-4 rounded-xl shadow-lg transition-all disabled:opacity-50"
+          onClick={handleOpenWhatsApp}
+          disabled={!canOpenWhatsApp || loading}
+          className="w-full h-12 rounded-xl bg-[#1f9d55] text-white font-bold disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {loading ? 'Creating Request...' : 'Proceed to Pay'}
+          Open WhatsApp
         </button>
+
+        {!loading && !canOpenWhatsApp && (
+          <p className="text-[12px] text-[#617589] dark:text-[#9cb7aa] text-center">
+            WhatsApp contact is not configured. Please use Help & Support to reach your broker.
+          </p>
+        )}
       </div>
     </div>
   );

@@ -32,6 +32,20 @@ const WithdrawalRequests = () => {
   const [actionLoading, setActionLoading] = useState(null);
   const [rejectModal, setRejectModal] = useState(null);
   const [rejectReason, setRejectReason] = useState('');
+  const [eligibleClients, setEligibleClients] = useState([]);
+  const [eligibleLoading, setEligibleLoading] = useState(false);
+  const [manualForm, setManualForm] = useState({
+    clientId: '',
+    amount: '',
+    method: 'bank_transfer',
+    paidAt: (() => {
+      const now = new Date();
+      const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+      return local.toISOString().slice(0, 16);
+    })(),
+    reference: '',
+    notes: '',
+  });
 
   const [stats, setStats] = useState({
     pending: 0,
@@ -47,14 +61,17 @@ const WithdrawalRequests = () => {
         brokerApi.getWithdrawalStats()
       ]);
 
+      const manualStatsRes = await brokerApi.getManualWithdrawalStats().catch(() => ({ stats: { count: 0, totalAmount: 0 } }));
+
       const requestsData = requestsRes.withdrawals || requestsRes.data || [];
       setRequests(requestsData);
 
       const statsData = statsRes.stats || statsRes.data || statsRes;
       const fallbackTotal = requestsData.reduce((sum, r) => sum + (r.amount || 0), 0);
+      const manualStats = manualStatsRes?.stats || {};
       setStats({
         pending: extractCount(statsData.pending, requestsData.length),
-        totalValue: extractAmount(statsData.totalValue ?? statsData.totalAmount ?? statsData.pending, fallbackTotal)
+        totalValue: extractAmount(statsData.totalValue ?? statsData.totalAmount ?? statsData.pending, fallbackTotal) + toFiniteNumber(manualStats.totalAmount)
       });
     } catch (err) {
       console.error('Failed to fetch withdrawal requests:', err);
@@ -65,9 +82,27 @@ const WithdrawalRequests = () => {
     }
   }, []);
 
+  const fetchEligibleClients = useCallback(async () => {
+    setEligibleLoading(true);
+    try {
+      const res = await brokerApi.getWithdrawalEligibility({ limit: 200 });
+      setEligibleClients(res?.clients || []);
+    } catch {
+      setEligibleClients([]);
+    } finally {
+      setEligibleLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchWithdrawalRequests();
   }, [fetchWithdrawalRequests]);
+
+  useEffect(() => {
+    fetchEligibleClients();
+  }, [fetchEligibleClients]);
+
+  const selectedEligibleClient = eligibleClients.find((client) => client.customerId === manualForm.clientId) || null;
 
   const formatCurrency = (value) => {
     if (value >= 100000) {
@@ -119,6 +154,56 @@ const WithdrawalRequests = () => {
     }
   };
 
+  const handleManualFieldChange = (key, value) => {
+    setManualForm((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const resetManualForm = () => {
+    const now = new Date();
+    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+    setManualForm({
+      clientId: '',
+      amount: '',
+      method: 'bank_transfer',
+      paidAt: local.toISOString().slice(0, 16),
+      reference: '',
+      notes: '',
+    });
+  };
+
+  const handleCreateManualWithdrawal = async () => {
+    const clientId = String(manualForm.clientId || '').trim();
+    const amount = toFiniteNumber(manualForm.amount);
+
+    if (!clientId) {
+      setError('Client ID is required for manual withdrawal entry.');
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError('Enter a valid manual withdrawal amount.');
+      return;
+    }
+
+    setActionLoading('manual-withdrawal');
+    setError(null);
+    try {
+      await brokerApi.createManualWithdrawal(clientId, {
+        amount,
+        method: manualForm.method,
+        paidAt: manualForm.paidAt ? new Date(manualForm.paidAt).toISOString() : undefined,
+        reference: manualForm.reference,
+        notes: manualForm.notes,
+      });
+      resetManualForm();
+      await fetchWithdrawalRequests();
+      await fetchEligibleClients();
+    } catch (err) {
+      setError(err?.response?.data?.message || err?.message || 'Failed to record manual withdrawal entry.');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const filteredRequests = requests.filter(r => {
     if (!searchTerm) return true;
     const q = searchTerm.toLowerCase();
@@ -154,6 +239,94 @@ const WithdrawalRequests = () => {
       </div>
 
       <div className="flex-1 overflow-y-auto pb-6">
+        <div className="p-3 sm:p-4">
+          <div className="rounded-xl border border-red-200 bg-white p-3 sm:p-4 shadow-sm">
+            <p className="text-[11px] sm:text-xs font-semibold uppercase tracking-wider text-red-700">Manual Withdrawal Entry</p>
+            <p className="text-[11px] text-[#617589] mt-1">
+              Record completed payouts from WhatsApp/manual process. This debits withdrawable net cash.
+            </p>
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <select
+                value={manualForm.clientId}
+                onChange={(e) => handleManualFieldChange('clientId', e.target.value)}
+                className="h-10 rounded-lg border border-gray-200 px-3 text-sm outline-none"
+              >
+                <option value="">Select Client</option>
+                {eligibleClients.map((client) => (
+                  <option key={client.customerId} value={client.customerId}>
+                    {client.customerName || client.customerId} ({client.customerId})
+                  </option>
+                ))}
+              </select>
+              <input
+                type="text"
+                value={selectedEligibleClient ? `₹${toFiniteNumber(selectedEligibleClient.withdrawableNetCash).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
+                readOnly
+                placeholder={eligibleLoading ? 'Loading withdrawable...' : 'Withdrawable Amount'}
+                className="h-10 rounded-lg border border-gray-200 px-3 text-sm font-semibold text-[#111418] bg-gray-50"
+              />
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={manualForm.amount}
+                onChange={(e) => handleManualFieldChange('amount', e.target.value)}
+                placeholder="Amount"
+                className="h-10 rounded-lg border border-gray-200 px-3 text-sm outline-none"
+              />
+              <select
+                value={manualForm.method}
+                onChange={(e) => handleManualFieldChange('method', e.target.value)}
+                className="h-10 rounded-lg border border-gray-200 px-3 text-sm outline-none"
+              >
+                <option value="bank_transfer">Bank Transfer</option>
+                <option value="upi">UPI</option>
+                <option value="imps">IMPS</option>
+                <option value="neft">NEFT</option>
+                <option value="rtgs">RTGS</option>
+                <option value="internal">Internal</option>
+                <option value="other">Other</option>
+              </select>
+              <input
+                type="datetime-local"
+                value={manualForm.paidAt}
+                onChange={(e) => handleManualFieldChange('paidAt', e.target.value)}
+                className="h-10 rounded-lg border border-gray-200 px-3 text-sm outline-none"
+              />
+              <input
+                type="text"
+                value={manualForm.reference}
+                onChange={(e) => handleManualFieldChange('reference', e.target.value)}
+                placeholder="Reference (optional)"
+                className="h-10 rounded-lg border border-gray-200 px-3 text-sm outline-none sm:col-span-2"
+              />
+              <textarea
+                rows={2}
+                value={manualForm.notes}
+                onChange={(e) => handleManualFieldChange('notes', e.target.value)}
+                placeholder="Notes (optional)"
+                className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none resize-none sm:col-span-2"
+              />
+            </div>
+            <div className="mt-3 flex gap-2.5">
+              <button
+                onClick={resetManualForm}
+                disabled={actionLoading === 'manual-withdrawal'}
+                className="h-9 px-4 rounded-lg border border-gray-200 text-xs font-semibold"
+              >
+                Reset
+              </button>
+              <button
+                onClick={handleCreateManualWithdrawal}
+                disabled={actionLoading === 'manual-withdrawal'}
+                className="h-9 px-4 rounded-lg bg-red-600 text-white text-xs font-bold"
+              >
+                {actionLoading === 'manual-withdrawal' ? 'Recording...' : 'Record Withdrawal'}
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* Stats */}
         <div className="flex gap-2.5 sm:gap-3 p-3 sm:p-4">
           <div className="flex flex-1 flex-col rounded-xl bg-white p-3 sm:p-4 shadow-sm">

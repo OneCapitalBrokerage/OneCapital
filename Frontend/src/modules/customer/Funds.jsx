@@ -11,6 +11,7 @@ import {
 } from '../../utils/transactionFormatters';
 import { readSessionCache, writeSessionCache, clearSessionCache } from '../../utils/sessionCache';
 import { FundsWarningBanner } from '../../components/shared/WarningBanner';
+import { getWithdrawalWindowInfo } from '../../utils/withdrawalWindow';
 
 const FUNDS_CACHE_KEY = 'funds_tab_v1';
 const FUNDS_CACHE_TTL_MS = 30 * 1000;
@@ -33,10 +34,6 @@ const formatIstDateOnly = (value) => {
   });
 };
 
-const getIstNow = () => new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-
-const isSaturdayIst = () => getIstNow().getDay() === 6;
-
 const Funds = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -45,7 +42,9 @@ const Funds = () => {
   const [transactions, setTransactions] = useState([]);
   const [wallet, setWallet] = useState({
     depositedCash: 0,
+    pnlBalance: 0,
     netCash: 0,
+    weeklyNetCash: 0,
     withdrawableNetCash: 0,
     pendingWithdrawals: 0,
   });
@@ -70,7 +69,9 @@ const Funds = () => {
   const applyFundsState = useCallback((nextState) => {
     setWallet(nextState?.wallet || {
       depositedCash: 0,
+      pnlBalance: 0,
       netCash: 0,
+      weeklyNetCash: 0,
       withdrawableNetCash: 0,
       pendingWithdrawals: 0,
     });
@@ -129,7 +130,14 @@ const Funds = () => {
 
       const nextWallet = {
         depositedCash: data.wallet?.depositedCash ?? data.wallet?.availableCash ?? balance.net ?? 0,
+        pnlBalance:
+          data.wallet?.pnlBalance
+          ?? data.wallet?.realizedPnlBalance
+          ?? data.summary?.realizedPnlSinceSettlement
+          ?? data.wallet?.netCash
+          ?? 0,
         netCash: data.wallet?.netCash ?? 0,
+        weeklyNetCash: data.wallet?.weeklyNetCash ?? data.wallet?.netCash ?? 0,
         withdrawableNetCash: data.wallet?.withdrawableNetCash ?? data.wallet?.netCash ?? 0,
         pendingWithdrawals: data.wallet?.pendingWithdrawals ?? 0,
       };
@@ -238,12 +246,11 @@ const Funds = () => {
     trading.commodityDelivery.used +
     trading.commodityIntraday.used;
   const usedPercent = totalMarginAvailable > 0 ? Math.round((totalMarginUsed / totalMarginAvailable) * 100) : 0;
-  const saturdayActive = isSaturdayIst();
   const withdrawableNetCash = Math.max(0, Number(wallet.withdrawableNetCash) || 0);
-  const withdrawDisabled = loading || withdrawableNetCash <= 0 || !saturdayActive;
-  const currentWeekNetCash = Number(wallet.netCash) || 0;
-  const displayedNetCash = currentWeekNetCash;
-  const netCashToneClass = displayedNetCash >= 0 ? 'text-[#078838]' : 'text-red-500';
+  const withdrawalWindow = getWithdrawalWindowInfo();
+  const withdrawDisabled = loading || !withdrawalWindow.isOpen;
+  const displayedNetCash = Number(wallet.netCash) || 0;
+  const pnlBalanceToneClass = displayedNetCash >= 0 ? 'text-[#078838]' : 'text-red-500';
 
   return (
     <div className="flex flex-col min-h-screen bg-[#f2f4f6] dark:bg-[#050806] dark:text-[#e8f3ee] pb-24">
@@ -267,7 +274,7 @@ const Funds = () => {
         </div>
       )}
 
-      {/* Main Cards — Deposited Cash + Net Cash */}
+      {/* Main Cards — Deposited Cash + Settled P&L */}
       <div className="px-3 sm:px-4 mt-1.5 flex gap-2.5">
         {/* Deposited Cash */}
         <div className="flex-1 rounded-xl shadow-sm border border-gray-200 dark:border-[#22352d] bg-white dark:bg-[#0b120f] overflow-hidden">
@@ -288,7 +295,7 @@ const Funds = () => {
           </div>
         </div>
 
-        {/* Net Cash (P&L) */}
+        {/* Net Cash (This Week) */}
         <div className="flex-1 rounded-xl shadow-sm border border-gray-200 dark:border-[#22352d] bg-white dark:bg-[#0b120f] overflow-hidden">
           <div className="p-3.5 sm:p-4">
             <div className="flex items-start justify-between gap-2 mb-1">
@@ -296,18 +303,15 @@ const Funds = () => {
                 <span className="material-symbols-outlined text-[18px]" style={{ color: !loading && displayedNetCash >= 0 ? '#078838' : '#ef4444' }}>
                   trending_up
                 </span>
-                <p className="text-[#617589] dark:text-[#9cb7aa] text-[11px] sm:text-[13px]">Net Cash</p>
+                <p className="text-[#617589] dark:text-[#9cb7aa] text-[11px] sm:text-[13px]">Net Cash (This Week)</p>
               </div>
             </div>
-            <p className="text-[#617589] dark:text-[#9cb7aa] text-[10px] sm:text-[11px] mb-0.5">
-              Net P&amp;L
-            </p>
             {loading ? (
               <div className="animate-pulse">
                 <div className="h-6 bg-gray-200 rounded w-24 mb-1"></div>
               </div>
             ) : (
-              <p className={`text-[20px] sm:text-[24px] font-bold leading-tight tracking-[-0.02em] ${netCashToneClass}`}>
+              <p className={`text-[20px] sm:text-[24px] font-bold leading-tight tracking-[-0.02em] ${pnlBalanceToneClass}`}>
                 {displayedNetCash >= 0 ? '+' : ''}{formatCurrency(displayedNetCash)}
               </p>
             )}
@@ -376,6 +380,11 @@ const Funds = () => {
           Withdrawable (Net Cash): <span className="font-semibold text-[#111418] dark:text-[#e8f3ee]">{formatCurrency(withdrawableNetCash)}</span>
           {' '}| Pending Requests: <span className="font-semibold text-[#111418] dark:text-[#e8f3ee]">{formatCurrency(wallet.pendingWithdrawals)}</span>
         </p>
+        {!withdrawalWindow.isOpen && (
+          <p className="mt-1 text-[#b45309] text-[11px] font-medium">
+            Withdrawals are open only on Saturday (IST).
+          </p>
+        )}
       </div>
 
       {/* Info Banner */}
@@ -383,9 +392,7 @@ const Funds = () => {
         <div className="flex items-start gap-1.5 bg-[#e6f2ff] py-2.5 px-2.5 rounded-lg">
           <span className="material-symbols-outlined text-[#137fec] text-[16px] mt-[1px]">info</span>
           <p className="text-[#137fec] text-[11px] font-medium leading-tight">
-            {saturdayActive
-              ? 'Withdrawal requests are active today (Saturday, IST).'
-              : 'Withdrawal requests are active on Saturdays only.'}
+            Add-fund requests are handled through your broker on WhatsApp. Withdrawals are accepted only on Saturday (IST).
           </p>
         </div>
       </div>

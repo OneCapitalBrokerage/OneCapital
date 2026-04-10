@@ -6,6 +6,7 @@ import asyncHandler from 'express-async-handler';
 import CustomerModel from '../../Model/Auth/CustomerModel.js';
 import BrokerModel from '../../Model/Auth/BrokerModel.js';
 import DeletedCustomerModel from '../../Model/DeletedCustomerModel.js';
+import AuditEventModel from '../../Model/System/AuditEventModel.js';
 import FundModel from '../../Model/FundManagement/FundModel.js';
 import { reserveDeliveryForHoldConversion, reserveCommodityDeliveryForHoldConversion, refundMarginImmediate, reserveMargin, getMarginBucket } from '../../services/marginLifecycle.js';
 import { isMCX } from '../../Utils/mcx/resolver.js';
@@ -230,6 +231,7 @@ const getAllClients = asyncHandler(async (req, res) => {
     tradingEnabled: customer.trading_enabled || false,
     holdingsExitAllowed: customer.holdings_exit_allowed || false,
     settlementEnabled: customer.settlement_enabled !== false,
+    dealerMode: customer.dealer_mode || false,
     profilePhoto: customer.profile_photo || null,
     joiningDate: formatDate(customer.createdAt),
     lastLogin: customer.last_login,
@@ -304,6 +306,8 @@ const getClientById = asyncHandler(async (req, res) => {
       holdingsExitAllowed: customer.holdings_exit_allowed || false,
       settlementEnabled: customer.settlement_enabled !== false,
       glitchEnabled: customer.glitch_enabled === true,
+      dealerMode: customer.dealer_mode || false,
+      dealerModeReason: customer.dealer_mode_reason || null,
       segmentsAllowed: customer.segments_allowed || [],
       profilePhoto: customer.profile_photo || null,
       settings: customer.settings,
@@ -1306,6 +1310,88 @@ const setClientSettlement = asyncHandler(async (req, res) => {
 });
 
 /**
+ * @desc     Toggle Dealer Mode for a client (view-only mode)
+ * @route    PUT /api/broker/clients/:id/dealer-mode
+ * @access   Private (Broker only)
+ */
+const toggleDealerMode = asyncHandler(async (req, res) => {
+  const brokerId = req.user._id;
+  const brokerIdStr = req.user.login_id || req.user.stringBrokerId;
+  const { id } = req.params;
+  const { enabled, reason } = req.body || {};
+
+  if (typeof enabled !== 'boolean') {
+    return res.status(400).json({
+      success: false,
+      message: 'Field "enabled" (boolean) is required.',
+    });
+  }
+
+  const customer = await CustomerModel.findOne(
+    getCustomerOwnershipQuery(id, brokerId, brokerIdStr)
+  );
+
+  if (!customer) {
+    return res.status(404).json({ success: false, message: 'Client not found.' });
+  }
+
+  const previousState = customer.dealer_mode || false;
+
+  // Update dealer mode fields
+  customer.dealer_mode = enabled;
+  if (enabled) {
+    customer.dealer_mode_enabled_at = new Date();
+    customer.dealer_mode_enabled_by = brokerId;
+    customer.dealer_mode_reason = reason || null;
+  } else {
+    customer.dealer_mode_enabled_at = undefined;
+    customer.dealer_mode_enabled_by = undefined;
+    customer.dealer_mode_reason = undefined;
+  }
+
+  await customer.save();
+
+  // Create audit log entry
+  await AuditEventModel.create({
+    event_type: enabled ? 'dealer_mode_enabled' : 'dealer_mode_disabled',
+    category: 'client_management',
+    status: 'success',
+    message: enabled
+      ? `Dealer mode enabled for client ${customer.customer_id}`
+      : `Dealer mode disabled for client ${customer.customer_id}`,
+    actor_type: 'broker',
+    actor_id: brokerId,
+    actor_id_str: brokerIdStr,
+    target_type: 'customer',
+    target_id: customer._id,
+    target_id_str: customer.customer_id,
+    broker_id: brokerId,
+    broker_id_str: brokerIdStr,
+    customer_id: customer._id,
+    customer_id_str: customer.customer_id,
+    reason: reason || null,
+    metadata: {
+      previous_state: previousState,
+      new_state: enabled,
+      reason: reason || null,
+    },
+    source: 'api',
+  });
+
+  console.log(`[Broker] Dealer mode ${enabled ? 'enabled' : 'disabled'} for client ${customer.customer_id} by broker ${brokerIdStr}`);
+
+  res.status(200).json({
+    success: true,
+    message: enabled
+      ? 'Dealer mode enabled. Customer can only view data.'
+      : 'Dealer mode disabled. Customer can trade normally.',
+    dealerMode: customer.dealer_mode,
+    reason: customer.dealer_mode_reason || null,
+    updatedAt: new Date(),
+  });
+});
+
+/**
  * @desc     Broker-only silent holdings quantity/lots correction
  * @route    PUT /api/broker/clients/:id/orders/:orderId/holding-adjustment
  * @access   Private (Broker only)
@@ -1468,5 +1554,6 @@ export {
   convertOrderToHold,
   extendOrderValidity,
   setClientSettlement,
+  toggleDealerMode,
   adjustHolding,
 };

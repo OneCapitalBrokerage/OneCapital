@@ -117,6 +117,7 @@ router.post('/auth/login', asyncHandler(async (req, res) => {
       kycStatus: customer.kyc_status,
       tradingEnabled: customer.trading_enabled,
       holdingsExitAllowed: customer.holdings_exit_allowed,
+      dealerMode: customer.dealer_mode || false,
       profilePhoto: customer.profile_photo,
     },
   });

@@ -126,6 +126,21 @@ const Orders = () => {
     setHoldings(nextState?.holdings || []);
   }, []);
 
+  const fetchAllOrders = useCallback(async () => {
+    const limit = 200;
+    const maxPages = 50;
+    const collected = [];
+
+    for (let page = 1; page <= maxPages; page += 1) {
+      const response = await customerApi.getOrders({ page, limit });
+      const batch = response?.orders || response?.data || [];
+      collected.push(...batch);
+      if (batch.length < limit) break;
+    }
+
+    return collected;
+  }, []);
+
   const fetchOrders = useCallback(async (options = {}) => {
     const { force = false } = options;
     let shouldShowLoading = true;
@@ -154,10 +169,10 @@ const Orders = () => {
     setError(null);
     try {
       const [ordersResponse, holdingsResponse] = await Promise.all([
-        customerApi.getOrders(),
+        fetchAllOrders(),
         customerApi.getHoldings().catch(() => ({ holdings: [] })),
       ]);
-      const allOrders = ordersResponse.orders || ordersResponse.data || [];
+      const allOrders = Array.isArray(ordersResponse) ? ordersResponse : [];
       const holdingsData = holdingsResponse.holdings || holdingsResponse.data || [];
 
       // Map orders preserving ALL raw fields for payloads
@@ -281,7 +296,7 @@ const Orders = () => {
         setLoading(false);
       }
     }
-  }, [applyOrdersState]);
+  }, [applyOrdersState, fetchAllOrders]);
 
   useEffect(() => {
     fetchOrders();

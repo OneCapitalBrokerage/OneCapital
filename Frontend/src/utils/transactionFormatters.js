@@ -5,6 +5,46 @@ const toNumber = (value, fallback = 0) => {
 
 const toLower = (value) => String(value || '').trim().toLowerCase();
 
+const MANUAL_METHOD_LABELS = {
+  upi: 'UPI',
+  imps: 'IMPS',
+  neft: 'NEFT',
+  rtgs: 'RTGS',
+  bank_transfer: 'Bank Transfer',
+  cash: 'Cash',
+  cheque: 'Cheque',
+  internal: 'Internal',
+  other: 'Other',
+};
+
+const normalizeMethodKey = (value) => {
+  const normalized = toLower(value).replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  if (!normalized) return 'other';
+  return Object.prototype.hasOwnProperty.call(MANUAL_METHOD_LABELS, normalized)
+    ? normalized
+    : 'other';
+};
+
+const parseManualMethod = (tx = {}) => {
+  const preferred = tx.method || tx.methodLabel || '';
+  if (preferred) {
+    const method = normalizeMethodKey(preferred);
+    return { method, methodLabel: MANUAL_METHOD_LABELS[method] || MANUAL_METHOD_LABELS.other };
+  }
+
+  const noteText = String(tx.notes || tx.subtitle || tx.description || '').trim();
+  const explicitMatch = noteText.match(/(?:manual deposit(?: recorded| entry)?|withdrawal entry|funds credited)\s*\(([^)]+)\)/i);
+  if (explicitMatch?.[1]) {
+    const method = normalizeMethodKey(explicitMatch[1]);
+    return { method, methodLabel: MANUAL_METHOD_LABELS[method] || MANUAL_METHOD_LABELS.other };
+  }
+
+  const lowered = toLower(noteText);
+  const matchedKey = Object.keys(MANUAL_METHOD_LABELS).find((key) => lowered.includes(key.replace(/_/g, ' ')) || lowered.includes(key));
+  const method = matchedKey || 'other';
+  return { method, methodLabel: MANUAL_METHOD_LABELS[method] || MANUAL_METHOD_LABELS.other };
+};
+
 const trimText = (value, maxLen = 84) => {
   const clean = String(value || '').replace(/\s+/g, ' ').trim();
   if (!clean) return '';
@@ -24,7 +64,7 @@ const normalizeStatus = (value) => {
 };
 
 const inferCategory = (rawType) => {
-  if (rawType === 'credit' || rawType === 'withdrawal') return 'payment';
+  if (rawType === 'credit' || rawType === 'withdrawal' || rawType === 'manual_deposit' || rawType === 'manual_withdrawal') return 'payment';
   if (rawType === 'realized_profit' || rawType === 'realized_loss') return 'trading';
   if (rawType.startsWith('margin_')) return 'margin';
   if (rawType === 'adjustment') return 'adjustment';
@@ -37,10 +77,10 @@ const normalizeDirection = (direction, signedAmount, rawType) => {
     return normalizedDirection;
   }
 
-  if (rawType === 'withdrawal' || rawType === 'realized_loss' || rawType === 'margin_locked_delivery') {
+  if (rawType === 'withdrawal' || rawType === 'manual_withdrawal' || rawType === 'realized_loss' || rawType === 'margin_locked_delivery') {
     return 'debit';
   }
-  if (rawType === 'credit' || rawType === 'realized_profit') return 'credit';
+  if (rawType === 'credit' || rawType === 'manual_deposit' || rawType === 'realized_profit') return 'credit';
   if (signedAmount > 0) return 'credit';
   if (signedAmount < 0) return 'debit';
   return 'neutral';
@@ -48,6 +88,9 @@ const normalizeDirection = (direction, signedAmount, rawType) => {
 
 const normalizeUiTransaction = (tx = {}) => {
   const rawType = toLower(tx.rawType || tx.type);
+  const manualMethodMeta = rawType === 'manual_deposit' || rawType === 'manual_withdrawal'
+    ? parseManualMethod(tx)
+    : { method: '', methodLabel: '' };
   const signedAmount = toNumber(
     tx.signedAmount,
     tx.direction === 'debit' ? -Math.abs(toNumber(tx.amount)) : toNumber(tx.amount)
@@ -64,11 +107,24 @@ const normalizeUiTransaction = (tx = {}) => {
     direction,
     amount,
     signedAmount,
-    title: trimText(tx.title || tx.description || tx.type || 'Account Activity', 72),
-    subtitle: trimText(tx.subtitle || tx.notes || '', 96),
+    title: trimText(
+      tx.title
+      || (rawType === 'manual_deposit'
+        ? 'Funds Credited'
+        : rawType === 'manual_withdrawal'
+          ? 'Funds Debited'
+          : tx.description || tx.type || 'Account Activity'),
+      72
+    ),
+    subtitle: trimText(
+      tx.subtitle || ((rawType === 'manual_deposit' || rawType === 'manual_withdrawal') ? manualMethodMeta.methodLabel : tx.notes || ''),
+      96
+    ),
     status: normalizeStatus(tx.status),
     reference: String(tx.reference || '').trim(),
     rawType,
+    method: manualMethodMeta.method,
+    methodLabel: manualMethodMeta.methodLabel,
   };
 };
 

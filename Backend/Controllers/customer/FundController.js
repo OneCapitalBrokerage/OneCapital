@@ -16,6 +16,10 @@ import {
 } from '../../Utils/fundTransactionMapper.js';
 import { resolveCurrentWeeklyBoundary } from '../../Utils/weeklySettlement.js';
 import { writeAuditSuccess } from '../../Utils/AuditLogger.js';
+import {
+  getWeeklyRealizedFromOrders,
+  reconcileMissingRealizedTransactions,
+} from '../../services/fundPnlCanonicalService.js';
 import { createPaymentRequest } from '../broker/PaymentController.js';
 import { createWithdrawalRequest } from '../broker/WithdrawalController.js';
 import { applyGlitchOverlay } from '../../services/glitchOverlay.js';
@@ -277,7 +281,9 @@ const getBalance = asyncHandler(async (req, res) => {
       wallet: {
         availableCash: 0,
         depositedCash: 0,
+        pnlBalance: 0,
         netCash: 0,
+        weeklyNetCash: 0,
         pendingWithdrawals,
         withdrawableNetCash: 0,
       },
@@ -367,23 +373,59 @@ const getBalance = asyncHandler(async (req, res) => {
     return sum + (approved > 0 ? approved : toNumber(request?.amount));
   }, 0);
 
-  const weeklyBoundary = resolveCurrentWeeklyBoundary({
-    transactions: fund.transactions || [],
+  const canonicalWeek = await getWeeklyRealizedFromOrders({
+    fund,
+    customerIdStr,
+    brokerIdStr,
     nowUtc: new Date(),
   });
-  const boundaryStartUtc = weeklyBoundary.boundaryStartUtc;
 
-  // Calculate realized P&L for active week/session using weekly settlement boundary.
-  const realizedPnlThisWeek = (fund.transactions || [])
-    .filter((t) => {
-      const ts = t.timestamp ? new Date(t.timestamp) : null;
-      return (
-        ts
-        && ts >= boundaryStartUtc
-        && (t.type === 'realized_profit' || t.type === 'realized_loss')
-      );
-    })
-    .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+  const reconciliation = reconcileMissingRealizedTransactions({
+    fund,
+    weekOrders: canonicalWeek.weekOrders,
+    processedBy: req.user.mongoBrokerId,
+    dryRun: false,
+  });
+
+  if (reconciliation.missingCount > 0) {
+    await fund.save();
+
+    await writeAuditSuccess({
+      req,
+      type: 'transaction',
+      eventType: 'FUND_REALIZED_LEDGER_BACKFILL',
+      category: 'funds',
+      message: `Backfilled ${reconciliation.missingCount} missing realized ledger entries for customer ${customerIdStr}.`,
+      target: {
+        type: 'customer',
+        id: req.user._id,
+        id_str: customerIdStr,
+      },
+      entity: {
+        type: 'fund',
+        id: fund._id,
+        ref: customerIdStr,
+      },
+      customer: {
+        customer_id: req.user._id,
+        customer_id_str: customerIdStr,
+      },
+      broker: {
+        broker_id: req.user.mongoBrokerId,
+        broker_id_str: brokerIdStr,
+      },
+      amountDelta: reconciliation.missingPnlTotal,
+      metadata: {
+        missingCount: reconciliation.missingCount,
+        missingPnlTotal: reconciliation.missingPnlTotal,
+        missingOrderIds: reconciliation.missingOrders.map((order) => String(order._id)),
+      },
+      note: 'Automatic realized ledger reconciliation on balance read.',
+    });
+  }
+
+  const boundaryStartUtc = canonicalWeek.boundaryStartUtc;
+  const realizedPnlThisWeek = canonicalWeek.realizedPnlThisWeek;
 
   // Subtract approved withdrawals recorded in fund.transactions since the boundary.
   // When a withdrawal is approved, pendingWithdrawals drops to 0 (request is no longer pending)
@@ -419,7 +461,11 @@ const getBalance = asyncHandler(async (req, res) => {
     wallet: {
       availableCash,
       depositedCash,
+      // Canonical settled realized P&L balance. Deposits/withdrawals must not mutate this.
+      pnlBalance,
+      // Week/session transaction-derived realized P&L metric (legacy `netCash`).
       netCash: netCashAfterWithdrawals,
+      weeklyNetCash: netCashAfterWithdrawals,
       pendingWithdrawals,
       withdrawableNetCash,
       withdrawnThisWeek: Number(withdrawalTxThisWeek.toFixed(2)),
@@ -470,17 +516,17 @@ const getBalance = asyncHandler(async (req, res) => {
       realizedPnlThisWeek: Number(realizedPnlThisWeek.toFixed(2)),
       realizedPnlSinceSettlement: Number(realizedPnlThisWeek.toFixed(2)),
       weekBoundaryStart: boundaryStartUtc.toISOString(),
-      weekBoundaryType: weeklyBoundary.boundaryType,
+      weekBoundaryType: canonicalWeek.boundaryType,
     },
     settlement: {
       boundaryStart: boundaryStartUtc.toISOString(),
-      boundaryType: weeklyBoundary.boundaryType,
-      weekStart: weeklyBoundary.weekStartUtc.toISOString(),
-      weekEnd: weeklyBoundary.weekEndUtc.toISOString(),
-      latestSettlementAt: weeklyBoundary.latestSettlement?.timestamp
-        ? weeklyBoundary.latestSettlement.timestamp.toISOString()
+      boundaryType: canonicalWeek.boundaryType,
+      weekStart: canonicalWeek.weekStartUtc.toISOString(),
+      weekEnd: canonicalWeek.weekEndUtc.toISOString(),
+      latestSettlementAt: canonicalWeek.latestSettlement?.timestamp
+        ? canonicalWeek.latestSettlement.timestamp.toISOString()
         : null,
-      latestSettlementMode: weeklyBoundary.latestSettlement?.metadata?.mode || null,
+      latestSettlementMode: canonicalWeek.latestSettlement?.metadata?.mode || null,
     },
   };
   res.status(200).json(applyGlitchOverlay(_fundsPayload, 'funds', req));
@@ -615,20 +661,58 @@ const requestWithdraw = asyncHandler(async (req, res) => {
     broker_id_str: brokerIdStr,
   }).select('transactions pnl_balance');
 
-  const weeklyBoundary = resolveCurrentWeeklyBoundary({
-    transactions: fund?.transactions || [],
+  const canonicalWeek = await getWeeklyRealizedFromOrders({
+    fund,
+    customerIdStr,
+    brokerIdStr,
     nowUtc: new Date(),
   });
-  const realizedPnlThisWeek = (fund?.transactions || [])
-    .filter((t) => {
-      const ts = t.timestamp ? new Date(t.timestamp) : null;
-      return (
-        ts
-        && ts >= weeklyBoundary.boundaryStartUtc
-        && (t.type === 'realized_profit' || t.type === 'realized_loss')
-      );
-    })
-    .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+
+  const reconciliation = reconcileMissingRealizedTransactions({
+    fund,
+    weekOrders: canonicalWeek.weekOrders,
+    processedBy: req.user.mongoBrokerId,
+    dryRun: false,
+  });
+
+  if (reconciliation.missingCount > 0) {
+    await fund.save();
+
+    await writeAuditSuccess({
+      req,
+      type: 'transaction',
+      eventType: 'FUND_REALIZED_LEDGER_BACKFILL',
+      category: 'funds',
+      message: `Backfilled ${reconciliation.missingCount} missing realized ledger entries for customer ${customerIdStr} during withdrawal validation.`,
+      target: {
+        type: 'customer',
+        id: req.user._id,
+        id_str: customerIdStr,
+      },
+      entity: {
+        type: 'fund',
+        id: fund._id,
+        ref: customerIdStr,
+      },
+      customer: {
+        customer_id: req.user._id,
+        customer_id_str: customerIdStr,
+      },
+      broker: {
+        broker_id: req.user.mongoBrokerId,
+        broker_id_str: brokerIdStr,
+      },
+      amountDelta: reconciliation.missingPnlTotal,
+      metadata: {
+        missingCount: reconciliation.missingCount,
+        missingPnlTotal: reconciliation.missingPnlTotal,
+        missingOrderIds: reconciliation.missingOrders.map((order) => String(order._id)),
+      },
+      note: 'Automatic realized ledger reconciliation before withdrawal request validation.',
+    });
+  }
+
+  const realizedPnlThisWeek = canonicalWeek.realizedPnlThisWeek;
 
   const netCash = Number(realizedPnlThisWeek.toFixed(2));
   const pendingWithdrawals = await getPendingWithdrawalsTotal({

@@ -5,7 +5,9 @@ import express from 'express';
 import { protect } from '../../Middleware/authMiddleware.js';
 import {
   addFundsToClient,
+  createManualDeposit,
   getClientBalance,
+  getManualDeposits,
   updateClientFunds,
   getFundHistory,
 } from '../../Controllers/broker/FundController.js';
@@ -21,6 +23,20 @@ router.use(protect);
  * @access  Private (Broker only)
  */
 router.post('/funds/add', addFundsToClient);
+
+/**
+ * @route   POST /api/broker/clients/:id/manual-deposits
+ * @desc    Record manual customer deposit (e.g. via WhatsApp)
+ * @access  Private (Broker only)
+ */
+router.post('/clients/:id/manual-deposits', createManualDeposit);
+
+/**
+ * @route   GET /api/broker/manual-deposits
+ * @desc    Get broker manual deposit records
+ * @access  Private (Broker only)
+ */
+router.get('/manual-deposits', getManualDeposits);
 
 /**
  * @route   GET /api/broker/clients/:id/balance

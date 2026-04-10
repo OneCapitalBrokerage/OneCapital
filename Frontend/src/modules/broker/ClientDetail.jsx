@@ -110,6 +110,21 @@ const ClientDetail = () => {
     }
   }, [clientId]);
 
+  const fetchAllClientOrders = useCallback(async () => {
+    const limit = 200;
+    const maxPages = 50;
+    const collected = [];
+
+    for (let page = 1; page <= maxPages; page += 1) {
+      const response = await brokerApi.getClientOrders(clientId, { page, limit });
+      const batch = response?.orders || response?.data || [];
+      collected.push(...batch);
+      if (batch.length < limit) break;
+    }
+
+    return collected;
+  }, [clientId]);
+
   // Fetch orders via broker impersonation
   const fetchOrders = useCallback(async () => {
     if (!clientId) return;
@@ -132,12 +147,12 @@ const ClientDetail = () => {
 
       try {
         const [ordersRes, holdingsRes, balanceRes] = await Promise.all([
-          brokerApi.getClientOrders(clientId),
+          fetchAllClientOrders(),
           brokerApi.getClientHoldingsOrders(clientId).catch(() => ({ holdings: [] })),
           customerApi.getBalance().catch(() => ({})),
         ]);
 
-        const allOrders = ordersRes.orders || ordersRes.data || [];
+        const allOrders = Array.isArray(ordersRes) ? ordersRes : [];
         const holdingsData = holdingsRes.holdings || holdingsRes.data || [];
         const nextSummary = balanceRes?.summary || null;
 
@@ -228,7 +243,7 @@ const ClientDetail = () => {
     } finally {
       setOrdersLoading(false);
     }
-  }, [clientId]);
+  }, [clientId, fetchAllClientOrders]);
 
   useEffect(() => {
     fetchClientDetails();
@@ -571,6 +586,24 @@ const ClientDetail = () => {
     }
   };
 
+  const handleToggleDealerMode = async () => {
+    if (!client) return;
+    const newEnabled = !client.dealerMode;
+    const action = newEnabled ? 'enable' : 'disable';
+    if (!window.confirm(`Are you sure you want to ${action} Dealer Mode for ${client.name}? ${newEnabled ? 'Customer will not be able to place trades or manage funds.' : 'Customer will regain trading and fund management access.'}`)) {
+      return;
+    }
+    setActionLoading(true);
+    try {
+      await brokerApi.toggleDealerMode(clientId, newEnabled);
+      setClient((prev) => ({ ...prev, dealerMode: newEnabled }));
+    } catch (err) {
+      console.error('Failed to toggle dealer mode:', err);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   // Overview metrics from order data
   const overviewMetrics = useMemo(() => {
     const totalOpenPnl = openOrders.reduce((sum, o) => {
@@ -874,6 +907,11 @@ const ClientDetail = () => {
                     Admin Suspended
                   </span>
                 )}
+                {client.dealerMode && (
+                  <span className="px-2 py-0.5 rounded text-[10px] sm:text-xs font-bold uppercase bg-purple-100 text-purple-700">
+                    Dealer Mode
+                  </span>
+                )}
                 {!client.settlementEnabled && (
                   <span className="px-2 py-0.5 rounded text-[10px] sm:text-xs font-bold uppercase bg-amber-100 text-amber-700">
                     Settlement Off
@@ -991,6 +1029,43 @@ const ClientDetail = () => {
                   >
                     <span className={`block w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-white shadow-sm transform transition-transform duration-200 mt-0.5 ${
                       client.settlementEnabled ? 'translate-x-5' : 'translate-x-0.5'
+                    }`}></span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Dealer Mode Toggle */}
+              <div className={`flex items-center justify-between bg-gray-50 p-3 rounded-xl ${client.status === 'blocked' || client.blockedByAdmin ? 'opacity-50 pointer-events-none' : ''}`}>
+                <div className="flex items-center gap-2 sm:gap-3">
+                  <div className={`p-2 rounded-full shadow-sm bg-white ${client.dealerMode ? 'text-purple-600' : 'text-gray-400'}`}>
+                    <span className="material-symbols-outlined text-[18px] sm:text-[20px]">
+                      {client.dealerMode ? 'supervised_user_circle' : 'person'}
+                    </span>
+                  </div>
+                  <div>
+                    <p className="text-xs sm:text-sm font-bold">Dealer Mode</p>
+                    <p className="text-[10px] sm:text-xs text-[#617589]">
+                      {client.dealerMode ? 'View-only: Customer cannot trade or manage funds' : 'Customer has full trading access'}
+                    </p>
+                  </div>
+                </div>
+                <div className="relative inline-block w-10 sm:w-11 h-5 sm:h-6 align-middle select-none">
+                  <input
+                    type="checkbox"
+                    id="dealerModeToggle"
+                    checked={!!client.dealerMode}
+                    onChange={handleToggleDealerMode}
+                    disabled={actionLoading || client.status === 'blocked' || client.blockedByAdmin}
+                    className="sr-only peer"
+                  />
+                  <label
+                    htmlFor="dealerModeToggle"
+                    className={`block overflow-hidden h-5 sm:h-6 rounded-full cursor-pointer transition-colors duration-200 ${
+                      client.dealerMode ? 'bg-purple-500' : 'bg-gray-300'
+                    }`}
+                  >
+                    <span className={`block w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-white shadow-sm transform transition-transform duration-200 mt-0.5 ${
+                      client.dealerMode ? 'translate-x-5' : 'translate-x-0.5'
                     }`}></span>
                   </label>
                 </div>

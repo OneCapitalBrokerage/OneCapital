@@ -23,6 +23,7 @@ import {
   convertOrderToHold,
   extendOrderValidity,
   setClientSettlement,
+  toggleDealerMode,
   adjustHolding,
 } from '../../Controllers/broker/ClientController.js';
 
@@ -149,6 +150,13 @@ router.post('/clients/:id/orders/:orderId/extend-validity', extendOrderValidity)
  * @access  Private (Broker only)
  */
 router.put('/clients/:id/settlement', setClientSettlement);
+
+/**
+ * @route   PUT /api/broker/clients/:id/dealer-mode
+ * @desc    Toggle Dealer Mode (view-only mode) for a client
+ * @access  Private (Broker only)
+ */
+router.put('/clients/:id/dealer-mode', toggleDealerMode);
 
 /**
  * @route   PUT /api/broker/clients/:id/orders/:orderId/holding-adjustment

@@ -38,7 +38,7 @@ const getPendingApprovalsSummary = async ({ brokerIdStr }) => {
     };
   }
 
-  const [brokerCustomers, registrationPending, cncPending, withdrawalPending, paymentPending] = await Promise.all([
+  const [brokerCustomers, registrationPending, cncPending, withdrawalPending, paymentPending, manualDepositCount] = await Promise.all([
     CustomerModel.find({ broker_id_str: brokerIdStr }).select('_id').lean(),
     RegistrationModel.countDocuments({
       broker_id_str: brokerIdStr,
@@ -58,6 +58,17 @@ const getPendingApprovalsSummary = async ({ brokerIdStr }) => {
       broker_id_str: brokerIdStr,
       status: { $in: ['pending', 'pending_proof'] },
     }),
+    FundModel.aggregate([
+      { $match: { broker_id_str: brokerIdStr } },
+      { $unwind: '$transactions' },
+      {
+        $match: {
+          'transactions.type': 'credit',
+          'transactions.notes': { $regex: '(manual deposit recorded|manual deposit entry|funds credited)', $options: 'i' },
+        },
+      },
+      { $count: 'count' },
+    ]),
   ]);
 
   const customerIds = brokerCustomers.map((customer) => customer._id);
@@ -80,6 +91,7 @@ const getPendingApprovalsSummary = async ({ brokerIdStr }) => {
     cncPending,
     withdrawalPending,
     paymentPending,
+    manualDepositCount: Number(manualDepositCount?.[0]?.count || 0),
     totalPending,
   };
 };
@@ -449,6 +461,103 @@ const getActivityFeed = asyncHandler(async (req, res) => {
       timestamp: payment.reviewed_at || payment.updatedAt || payment.createdAt,
     });
   });
+
+  const recentManualDeposits = await FundModel.aggregate([
+    { $match: { broker_id_str: brokerIdStr } },
+    { $unwind: '$transactions' },
+      {
+        $match: {
+          'transactions.type': 'credit',
+          'transactions.notes': { $regex: '(manual deposit recorded|manual deposit entry|funds credited)', $options: 'i' },
+        },
+      },
+    { $sort: { 'transactions.timestamp': -1 } },
+    { $limit: safeLimit },
+    {
+      $project: {
+        customer_id_str: 1,
+        amount: '$transactions.amount',
+        timestamp: '$transactions.timestamp',
+        notes: '$transactions.notes',
+        reference: '$transactions.reference',
+      },
+    },
+  ]);
+
+  if (recentManualDeposits.length > 0) {
+    const manualCustomerIds = [...new Set(recentManualDeposits.map((entry) => entry.customer_id_str).filter(Boolean))];
+    const manualNameMap = {};
+    if (manualCustomerIds.length > 0) {
+      const manualCustomers = await CustomerModel.find({ customer_id: { $in: manualCustomerIds } })
+        .select('customer_id name')
+        .lean();
+      manualCustomers.forEach((customer) => {
+        manualNameMap[customer.customer_id] = customer.name;
+      });
+    }
+
+    recentManualDeposits.forEach((entry) => {
+      const customerName = manualNameMap[entry.customer_id_str] || '';
+      const reference = entry.reference ? ` • Ref: ${entry.reference}` : '';
+      activities.push({
+        type: 'manual_deposit',
+        message: `Funds credited ₹${entry.amount}${reference}`,
+        status: 'COMPLETED',
+        user: entry.customer_id_str,
+        userName: customerName,
+        timestamp: entry.timestamp,
+      });
+    });
+  }
+
+  const recentManualWithdrawals = await FundModel.aggregate([
+    { $match: { broker_id_str: brokerIdStr } },
+    { $unwind: '$transactions' },
+    {
+      $match: {
+        'transactions.type': 'withdrawal',
+        'transactions.notes': { $regex: 'withdrawal entry', $options: 'i' },
+      },
+    },
+    { $sort: { 'transactions.timestamp': -1 } },
+    { $limit: safeLimit },
+    {
+      $project: {
+        customer_id_str: 1,
+        amount: '$transactions.amount',
+        timestamp: '$transactions.timestamp',
+        reference: '$transactions.reference',
+      },
+    },
+  ]);
+
+  if (recentManualWithdrawals.length > 0) {
+    const manualWithdrawalCustomerIds = [
+      ...new Set(recentManualWithdrawals.map((entry) => entry.customer_id_str).filter(Boolean)),
+    ];
+    const withdrawalNameMap = {};
+    if (manualWithdrawalCustomerIds.length > 0) {
+      const withdrawalCustomers = await CustomerModel.find({ customer_id: { $in: manualWithdrawalCustomerIds } })
+        .select('customer_id name')
+        .lean();
+      withdrawalCustomers.forEach((customer) => {
+        withdrawalNameMap[customer.customer_id] = customer.name;
+      });
+    }
+
+    recentManualWithdrawals.forEach((entry) => {
+      const customerName = withdrawalNameMap[entry.customer_id_str] || '';
+      const reference = entry.reference ? ` • Ref: ${entry.reference}` : '';
+      activities.push({
+        type: 'manual_withdrawal',
+        message: `Withdrawal recorded ₹${entry.amount}${reference}`,
+        status: 'COMPLETED',
+        user: entry.customer_id_str,
+        userName: customerName,
+        timestamp: entry.timestamp,
+      });
+    });
+  }
 
   // Sort by timestamp
   activities.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
