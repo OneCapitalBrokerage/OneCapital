@@ -7,8 +7,8 @@ import {
 } from '../utils/marketStatus';
 
 const REFRESH_INTERVAL_MS = 15 * 1000;
-const DEALER_MODE_MESSAGE = 'Your account is in View-Only mode. Contact your broker to place orders.';
-const DEALER_MODE_FUNDS_MESSAGE = 'Your account is in View-Only mode. Contact your broker for fund operations.';
+const DEALER_MODE_MESSAGE = 'Purchasing positions or placing trades is not available for this account. Contact your broker/dealer for further details.';
+const DEALER_MODE_FUNDS_MESSAGE = 'Fund operations are not available for this account. Contact your broker/dealer for further details.';
 
 export const useCustomerTradingGate = () => {
   const { user, dealerMode } = useAuth();

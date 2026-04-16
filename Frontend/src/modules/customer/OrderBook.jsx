@@ -108,7 +108,7 @@ const statusChipClass = (status) => {
 const OrderBook = () => {
   const navigate = useNavigate();
   const { ticksRef, subscribe, unsubscribe } = useMarketData();
-  const { isCustomerTradeAllowed, marketClosedReason, isTradingAllowed, getClosedMessage } = useCustomerTradingGate();
+  const { isCustomerTradeAllowed, marketClosedReason, isTradingAllowed, getClosedMessage, isDealerModeActive } = useCustomerTradingGate();
   const { user } = useAuth();
   const holdingsExitAllowed = user?.holdingsExitAllowed === true;
 
@@ -538,7 +538,8 @@ const OrderBook = () => {
               const canExit = !!order.can_exit;
               const isHoldingsExitLocked = canExit && isHoldingsExitLockedForOrder(order);
               const isCncActionBlocked = section === 'cnc' && !isTradingAllowed({ exchange: order.exchange, segment: order.segment });
-              const showActions = (canModify || canExit) && !isCncActionBlocked;
+              const isOrderActionBlocked = isDealerModeActive || isCncActionBlocked;
+              const showActions = (canModify || canExit) && !isOrderActionBlocked;
               const reason = order.status_reason || order.rejection_reason || null;
               const actionGridClass = canModify && canExit ? 'grid-cols-2' : 'grid-cols-1';
 
@@ -652,7 +653,7 @@ const OrderBook = () => {
                       </div>
                     </div>
                   )}
-                  {isCncActionBlocked && (
+                  {isOrderActionBlocked && (
                     <div className="px-3 py-2 text-[10px] sm:text-xs text-amber-700 bg-amber-50 dark:bg-amber-900/20 border-t border-amber-100 dark:border-amber-900/30">
                       {getClosedMessage({ exchange: order.exchange, segment: order.segment }) || marketClosedReason}
                     </div>
@@ -682,6 +683,7 @@ const OrderBook = () => {
         order={modifyOrder}
         onClose={() => setModifyOrder(null)}
         onModified={() => fetchOrderBook({ pageToLoad: 1, append: false })}
+        blockAllActionsForCustomer={isDealerModeActive}
         marketClosedForCustomer={modifyOrder ? !isTradingAllowed({ exchange: modifyOrder.exchange, segment: modifyOrder.segment }) : false}
         marketClosedReason={modifyOrder ? (getClosedMessage({ exchange: modifyOrder.exchange, segment: modifyOrder.segment }) || marketClosedReason) : ''}
         livePrices={livePrices}
@@ -709,6 +711,7 @@ const OrderBook = () => {
         onConfirm={handleExitConfirm}
         submitting={exitSubmitting}
         error={exitError}
+        blockAllActionsForCustomer={isDealerModeActive}
         marketClosedForCustomer={exitOrder ? !isTradingAllowed({ exchange: exitOrder.exchange, segment: exitOrder.segment }) : false}
         marketClosedReason={exitOrder ? (getClosedMessage({ exchange: exitOrder.exchange, segment: exitOrder.segment }) || marketClosedReason) : marketClosedReason}
       />

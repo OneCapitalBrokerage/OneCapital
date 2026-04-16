@@ -15,6 +15,7 @@ const ModifyOrderSheet = ({
   onExtendValidity,
   onAdjustHolding,
   brokerMode,
+  blockAllActionsForCustomer = false,
   marketClosedForCustomer = false,
   marketClosedReason = '',
   livePrices = {},
@@ -64,7 +65,9 @@ const ModifyOrderSheet = ({
   const product = (order?.product || 'MIS').toUpperCase();
   const isLongTerm = product === 'CNC' || product === 'NRML';
   const slTargetLocked = isLongTerm && !brokerMode;
+  const dealerModeBlocked = blockAllActionsForCustomer && !brokerMode;
   const marketClosedHoldingBlocked = marketClosedForCustomer && isLongTerm && !brokerMode;
+  const actionsBlockedForCustomer = dealerModeBlocked || marketClosedHoldingBlocked;
 
   // Detect option orders
   const isOption = useMemo(() => {
@@ -180,7 +183,7 @@ const ModifyOrderSheet = ({
   });
 
   const validate = () => {
-    if (marketClosedHoldingBlocked) {
+    if (actionsBlockedForCustomer) {
       return resolvedClosedText;
     }
 
@@ -207,7 +210,7 @@ const ModifyOrderSheet = ({
   };
 
   const handleSubmit = async () => {
-    if (marketClosedHoldingBlocked) {
+    if (actionsBlockedForCustomer) {
       setFeedback({ type: 'error', message: resolvedClosedText });
       return;
     }
@@ -469,7 +472,7 @@ const ModifyOrderSheet = ({
             </div>
           )}
 
-          {marketClosedHoldingBlocked && (
+          {actionsBlockedForCustomer && (
             <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-amber-50 text-amber-700">
               <span className="material-symbols-outlined text-[16px] mt-0.5 shrink-0">schedule</span>
               <p className="text-[11px] leading-snug">{resolvedClosedText}</p>
@@ -618,7 +621,7 @@ const ModifyOrderSheet = ({
                 Extend +7d
               </button>
             )}
-            {!marketClosedHoldingBlocked && (
+            {!actionsBlockedForCustomer && (
               <button
                 type="button"
                 onClick={handleSubmit}

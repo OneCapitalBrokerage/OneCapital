@@ -91,7 +91,7 @@ const sanitizeOrdersStateForCache = (state) => ({
 const Orders = () => {
   const navigate = useNavigate();
   const { ticksRef, tickUpdatedAtRef, subscribe, unsubscribe, isConnected } = useMarketData();
-  const { isCustomerTradeAllowed, marketClosedReason, isTradingAllowed, getClosedMessage } = useCustomerTradingGate();
+  const { isCustomerTradeAllowed, marketClosedReason, isTradingAllowed, getClosedMessage, isDealerModeActive } = useCustomerTradingGate();
   const { user } = useAuth();
   const holdingsExitAllowed = user?.holdingsExitAllowed === true;
   const [activeTab, setActiveTab] = useState('open');
@@ -698,11 +698,12 @@ const Orders = () => {
                 ['PENDING', 'PENDING_APPROVAL', 'TRIGGER_PENDING', 'AMO'].includes(status);
               const isActionableOrder = isActionableOrderRow(order);
               const isHoldingActionBlocked = activeTab === 'holdings' && !isTradingAllowed({ exchange: order.exchange, segment: order.segment });
+              const isOrderActionBlocked = isDealerModeActive || isHoldingActionBlocked;
               const canShowActions =
                 (activeTab === 'open' || activeTab === 'holdings') &&
                 !isPendingHolding &&
                 isActionableOrder &&
-                !isHoldingActionBlocked;
+                !isOrderActionBlocked;
 
               // Calculate P&L for card display
               const displayLtp = getDisplayLtp(order, isClosed);
@@ -816,7 +817,7 @@ const Orders = () => {
                       Pending holding order. Actions are disabled until execution.
                     </div>
                   )}
-                  {isHoldingActionBlocked && !isPendingHolding && (
+                  {isOrderActionBlocked && !isPendingHolding && (
                     <div className="px-3 py-2 text-[10px] sm:text-xs text-amber-700 bg-amber-50 dark:bg-amber-900/20 border-t border-amber-100 dark:border-amber-900/30">
                       {getClosedMessage({ exchange: order.exchange, segment: order.segment }) || marketClosedReason}
                     </div>
@@ -834,6 +835,7 @@ const Orders = () => {
         order={modifyOrder}
         onClose={() => setModifyOrder(null)}
         onModified={() => fetchOrders({ force: true })}
+        blockAllActionsForCustomer={isDealerModeActive}
         marketClosedForCustomer={modifyOrder ? !isTradingAllowed({ exchange: modifyOrder.exchange, segment: modifyOrder.segment }) : false}
         marketClosedReason={modifyOrder ? getClosedMessage({ exchange: modifyOrder.exchange, segment: modifyOrder.segment }) : ''}
         livePrices={livePrices}
@@ -863,6 +865,7 @@ const Orders = () => {
         onConfirm={handleExitConfirm}
         submitting={exitSubmitting}
         error={exitError}
+        blockAllActionsForCustomer={isDealerModeActive}
         marketClosedForCustomer={exitOrder ? !isTradingAllowed({ exchange: exitOrder.exchange, segment: exitOrder.segment }) : false}
         marketClosedReason={exitOrder ? (getClosedMessage({ exchange: exitOrder.exchange, segment: exitOrder.segment }) || marketClosedReason) : marketClosedReason}
       />

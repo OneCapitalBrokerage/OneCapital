@@ -136,6 +136,8 @@ const getProfile = asyncHandler(async (req, res) => {
       kycStatus: customer.kyc_status || 'pending',
       tradingEnabled: customer.trading_enabled,
       holdingsExitAllowed: customer.holdings_exit_allowed,
+      dealerMode: customer.dealer_mode || false,
+      dealerModeReason: customer.dealer_mode_reason || null,
       segmentsAllowed: customer.segments_allowed || [],
       isImpersonation: !!req.user?.isImpersonation,
       impersonatorRole: req.user?.impersonatorRole || null,

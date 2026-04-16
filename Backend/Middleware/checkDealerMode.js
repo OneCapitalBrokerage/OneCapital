@@ -44,8 +44,8 @@ export const checkDealerMode = (actionType = 'trading') => {
 
       if (customer.dealer_mode) {
         const messages = {
-          trading: 'Your account is in Dealer Mode. Please contact your broker to place orders.',
-          funds: 'Your account is in Dealer Mode. Please contact your broker for fund operations.',
+          trading: 'Purchasing positions or placing trades is not available for this account. Contact your broker/dealer for further details.',
+          funds: 'Fund operations are not available for this account. Contact your broker/dealer for further details.',
         };
 
         return res.status(403).json({

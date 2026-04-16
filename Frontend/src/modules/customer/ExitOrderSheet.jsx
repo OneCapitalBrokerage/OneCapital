@@ -20,6 +20,7 @@ const ExitOrderSheet = ({
   onConfirm,
   submitting = false,
   error = null,
+  blockAllActionsForCustomer = false,
   marketClosedForCustomer = false,
   marketClosedReason = '',
   liveLtpRef = null,
@@ -51,7 +52,9 @@ const ExitOrderSheet = ({
   const lotSize = mcxSpec ? mcxSpec.units_per_contract : (upc > 0 ? upc : (rawLotSize || 1));
   const maxLots = lotSize > 1 ? Math.floor(maxQuantity / lotSize) : maxQuantity;
   const isLongTermHolding = product === 'CNC' || product === 'NRML';
+  const isDealerModeBlocked = blockAllActionsForCustomer;
   const isExitBlockedByMarketClose = marketClosedForCustomer && isLongTermHolding;
+  const isExitBlockedForCustomer = isDealerModeBlocked || isExitBlockedByMarketClose;
   const resolvedClosedText = useMemo(() => (
     marketClosedReason || formatMarketClosedMessage({
       exchange: isMcx ? 'MCX' : order?.exchange,
@@ -133,7 +136,7 @@ const ExitOrderSheet = ({
   };
 
   const validate = () => {
-    if (isExitBlockedByMarketClose) {
+    if (isExitBlockedForCustomer) {
       return resolvedClosedText;
     }
     if (!exitLots || exitLots <= 0) {
@@ -295,13 +298,13 @@ const ExitOrderSheet = ({
             </div>
           )}
 
-          {isExitBlockedByMarketClose && (
+          {isExitBlockedForCustomer && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-amber-700 text-xs font-medium">
               {resolvedClosedText}
             </div>
           )}
 
-          {!isExitBlockedByMarketClose ? (
+          {!isExitBlockedForCustomer ? (
             <button
               type="button"
               onClick={handleConfirm}
